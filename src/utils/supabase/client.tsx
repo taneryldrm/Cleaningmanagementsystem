@@ -35,17 +35,33 @@ export async function apiCall(endpoint: string, options: ApiCallOptions = {}) {
     ...fetchOptions.headers,
   }
 
-  const response = await fetch(`${API_URL}${endpoint}`, {
-    ...fetchOptions,
-    headers,
-  })
+  try {
+    const response = await fetch(`${API_URL}${endpoint}`, {
+      ...fetchOptions,
+      headers,
+    })
 
-  const data = await response.json()
-  
-  if (!response.ok) {
-    console.error(`API Error at ${endpoint}:`, data.error)
-    throw new Error(data.error || 'API request failed')
+    const data = await response.json()
+    
+    // Debug logging for dashboard endpoint
+    if (endpoint === '/dashboard') {
+      console.log('🔍 RAW API Response for /dashboard:', data)
+      console.log('🔍 thisMonthIncome type:', typeof data.thisMonthIncome, '| value:', data.thisMonthIncome)
+      console.log('🔍 thisMonthExpense type:', typeof data.thisMonthExpense, '| value:', data.thisMonthExpense)
+      console.log('🔍 thisMonthProfit type:', typeof data.thisMonthProfit, '| value:', data.thisMonthProfit)
+    }
+    
+    if (!response.ok) {
+      console.error(`API Error at ${endpoint}:`, data.error)
+      throw new Error(data.error || 'API request failed')
+    }
+
+    return data
+  } catch (error) {
+    if (error instanceof Error && error.message.includes('fetch')) {
+      console.error(`Network error calling ${endpoint}. The server might not be running yet. Error:`, error.message)
+      throw new Error('Sunucuya bağlanılamadı. Lütfen sayfayı yenileyin veya birkaç saniye bekleyin.')
+    }
+    throw error
   }
-
-  return data
 }

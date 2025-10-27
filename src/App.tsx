@@ -6,9 +6,14 @@ import { Dashboard } from './components/Dashboard'
 import { Customers } from './components/Customers'
 import { Personnel } from './components/Personnel'
 import { WorkOrders } from './components/WorkOrders'
+import { PersonnelSchedule } from './components/PersonnelSchedule'
+import { MobileDailyProgram } from './components/MobileDailyProgram'
+import { PersonnelPayroll } from './components/PersonnelPayroll'
+import { DailyCashFlow } from './components/DailyCashFlow'
+import { MonthlySearch } from './components/MonthlySearch'
 import { Finance } from './components/Finance'
-import { Invoices } from './components/Invoices'
 import { UserManagement } from './components/UserManagement'
+import { Analytics } from './components/Analytics'
 import { Button } from './components/ui/button'
 import { 
   LayoutDashboard, 
@@ -20,10 +25,16 @@ import {
   Settings,
   LogOut,
   Menu,
-  X
+  X,
+  CalendarDays,
+  Smartphone,
+  Wallet,
+  DollarSign,
+  SearchCheck,
+  BarChart3
 } from 'lucide-react'
 
-type Page = 'dashboard' | 'customers' | 'personnel' | 'work-orders' | 'finance' | 'invoices' | 'users'
+type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'users'
 
 export default function App() {
   const [user, setUser] = useState<any>(null)
@@ -106,11 +117,16 @@ export default function App() {
 
   const menuItems = [
     { id: 'dashboard' as Page, label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'secretary', 'driver', 'cleaner'] },
+    { id: 'analytics' as Page, label: 'Raporlama & Analitik', icon: BarChart3, roles: ['admin', 'secretary'] },
     { id: 'customers' as Page, label: 'Müşteriler', icon: Users, roles: ['admin', 'secretary'] },
     { id: 'personnel' as Page, label: 'Personel', icon: UserCog, roles: ['admin', 'secretary'] },
     { id: 'work-orders' as Page, label: 'İş Emirleri', icon: ClipboardList, roles: ['admin', 'secretary', 'driver'] },
+    { id: 'mobile-daily' as Page, label: 'Günlük İş Programı', icon: Smartphone, roles: ['admin', 'secretary', 'driver', 'cleaner'] },
+    { id: 'personnel-payroll' as Page, label: 'Personel Bordroları', icon: Wallet, roles: ['admin', 'secretary'] },
+    { id: 'daily-cash-flow' as Page, label: 'Günlük Nakit Akışı', icon: DollarSign, roles: ['admin', 'secretary'] },
+    { id: 'monthly-search' as Page, label: 'Aylık Arama', icon: SearchCheck, roles: ['admin', 'secretary'] },
+    { id: 'personnel-schedule' as Page, label: 'Personel Takvimi', icon: CalendarDays, roles: ['admin', 'secretary', 'driver'] },
     { id: 'finance' as Page, label: 'Gelir-Gider', icon: TrendingUp, roles: ['admin', 'secretary'] },
-    { id: 'invoices' as Page, label: 'Faturalar', icon: FileText, roles: ['admin', 'secretary'] },
     { id: 'users' as Page, label: 'Kullanıcılar', icon: Settings, roles: ['admin'] },
   ]
 
@@ -120,16 +136,26 @@ export default function App() {
     switch (currentPage) {
       case 'dashboard':
         return <Dashboard user={user} />
+      case 'analytics':
+        return <Analytics user={user} />
       case 'customers':
         return <Customers user={user} />
       case 'personnel':
         return <Personnel user={user} />
       case 'work-orders':
         return <WorkOrders user={user} />
+      case 'mobile-daily':
+        return <MobileDailyProgram user={user} />
+      case 'personnel-payroll':
+        return <PersonnelPayroll user={user} />
+      case 'daily-cash-flow':
+        return <DailyCashFlow user={user} />
+      case 'monthly-search':
+        return <MonthlySearch user={user} />
+      case 'personnel-schedule':
+        return <PersonnelSchedule />
       case 'finance':
         return <Finance user={user} />
-      case 'invoices':
-        return <Invoices user={user} />
       case 'users':
         return role === 'admin' ? <UserManagement /> : <Dashboard user={user} />
       default:

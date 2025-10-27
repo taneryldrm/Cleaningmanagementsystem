@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Badge } from './ui/badge'
-import { Plus, Calendar, CheckCircle, Clock, Edit } from 'lucide-react'
+import { Plus, Calendar, CheckCircle, Clock, Edit, Trash2 } from 'lucide-react'
 import { Textarea } from './ui/textarea'
 
 interface WorkOrder {
@@ -16,8 +16,8 @@ interface WorkOrder {
   personnelIds: string[]
   date: string
   description: string
-  estimatedAmount: number
-  actualAmount: number
+  totalAmount: number
+  paidAmount: number
   status: string
   approvedAt: string | null
   completedAt: string | null
@@ -32,14 +32,24 @@ export function WorkOrders({ user }: { user: any }) {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null)
+  const [completingOrder, setCompletingOrder] = useState<WorkOrder | null>(null)
+  const [completionPayment, setCompletionPayment] = useState('')
 
   const [formData, setFormData] = useState({
     customerId: '',
     personnelIds: [] as string[],
-    date: new Date().toISOString().split('T')[0],
+    date: '', // Don't pre-fill with today - force user to select a date
     description: '',
-    estimatedAmount: '',
-    autoApprove: false
+    totalAmount: '',
+    paidAmount: '',
+    autoApprove: false,
+    isRecurring: false,
+    recurrenceType: 'weekly' as 'weekly' | 'biweekly' | 'monthly-date' | 'monthly-weekday',
+    recurrenceDay: 3, // Wednesday
+    recurrenceDate: 1,
+    recurrenceWeek: 1,
+    recurrenceWeekday: 0, // Sunday
+    endDate: new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0] // End of current year
   })
 
   const userRole = user?.user_metadata?.role
@@ -70,26 +80,83 @@ export function WorkOrders({ user }: { user: any }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    try {
-      const payload = {
-        customerId: formData.customerId,
-        personnelIds: formData.personnelIds,
-        date: formData.date,
-        description: formData.description,
-        estimatedAmount: parseFloat(formData.estimatedAmount) || 0,
-        autoApprove: formData.autoApprove
-      }
+    // Validate required fields
+    if (!formData.customerId) {
+      alert('Lütfen müşteri seçin')
+      return
+    }
 
-      if (editingOrder) {
-        await apiCall(`/work-orders/${editingOrder.id}`, {
-          method: 'PUT',
-          body: JSON.stringify(payload)
-        })
-      } else {
-        await apiCall('/work-orders', {
+    if (!formData.date) {
+      alert('Lütfen tarih seçin')
+      return
+    }
+
+    const totalAmount = parseFloat(formData.totalAmount)
+    const paidAmount = parseFloat(formData.paidAmount)
+    
+    if (isNaN(totalAmount) || totalAmount < 0) {
+      alert('Lütfen geçerli bir toplam tutar girin (0 veya pozitif değer)')
+      return
+    }
+
+    if (isNaN(paidAmount) || paidAmount < 0) {
+      alert('Lütfen geçerli bir ödenen tutar girin (0 veya pozitif değer)')
+      return
+    }
+
+    if (paidAmount > totalAmount) {
+      alert('Ödenen tutar toplam tutardan fazla olamaz')
+      return
+    }
+
+    try {
+      if (formData.isRecurring && !editingOrder) {
+        // Create recurring work orders
+        const payload = {
+          customerId: formData.customerId,
+          personnelIds: formData.personnelIds,
+          startDate: formData.date,
+          description: formData.description,
+          totalAmount: parseFloat(formData.totalAmount) || 0,
+          paidAmount: parseFloat(formData.paidAmount) || 0,
+          autoApprove: formData.autoApprove,
+          recurrenceType: formData.recurrenceType,
+          recurrenceDay: formData.recurrenceDay,
+          recurrenceDate: formData.recurrenceDate,
+          recurrenceWeek: formData.recurrenceWeek,
+          recurrenceWeekday: formData.recurrenceWeekday,
+          endDate: formData.endDate
+        }
+
+        const result = await apiCall('/work-orders/recurring', {
           method: 'POST',
           body: JSON.stringify(payload)
         })
+
+        alert(`${result.count} adet tekrarlayan iş emri oluşturuldu`)
+      } else {
+        // Create single work order or update existing
+        const payload = {
+          customerId: formData.customerId,
+          personnelIds: formData.personnelIds,
+          date: formData.date,
+          description: formData.description,
+          totalAmount: parseFloat(formData.totalAmount) || 0,
+          paidAmount: parseFloat(formData.paidAmount) || 0,
+          autoApprove: formData.autoApprove
+        }
+
+        if (editingOrder) {
+          await apiCall(`/work-orders/${editingOrder.id}`, {
+            method: 'PUT',
+            body: JSON.stringify(payload)
+          })
+        } else {
+          await apiCall('/work-orders', {
+            method: 'POST',
+            body: JSON.stringify(payload)
+          })
+        }
       }
 
       setIsDialogOpen(false)
@@ -117,16 +184,49 @@ export function WorkOrders({ user }: { user: any }) {
     }
   }
 
-  const handleComplete = async (orderId: string, actualAmount: number) => {
+  const handleCompleteClick = (order: WorkOrder) => {
+    setCompletingOrder(order)
+    // Pre-fill with remaining amount
+    const remainingAmount = (order.totalAmount || 0) - (order.paidAmount || 0)
+    setCompletionPayment(remainingAmount > 0 ? remainingAmount.toString() : '0')
+  }
+
+  const handleCompleteSubmit = async () => {
+    if (!completingOrder) return
+
+    const paymentAmount = parseFloat(completionPayment)
+    
+    if (isNaN(paymentAmount) || paymentAmount < 0) {
+      alert('Lütfen geçerli bir tutar girin (0 veya pozitif değer)')
+      return
+    }
+
+    const newPaidAmount = (completingOrder.paidAmount || 0) + paymentAmount
+    
+    if (newPaidAmount > (completingOrder.totalAmount || 0)) {
+      alert('Toplam ödenen tutar, iş emrinin toplam tutarından fazla olamaz')
+      return
+    }
+
     try {
-      await apiCall(`/work-orders/${orderId}`, {
+      await apiCall(`/work-orders/${completingOrder.id}`, {
         method: 'PUT',
         body: JSON.stringify({
           status: 'completed',
           completedAt: new Date().toISOString(),
-          actualAmount
+          paidAmount: newPaidAmount
         })
       })
+      
+      // Show success message
+      if (paymentAmount > 0) {
+        alert(`İş emri tamamlandı! ${paymentAmount.toFixed(2)} TL tahsilat günlük nakit akışına otomatik olarak kaydedildi.`)
+      } else {
+        alert('İş emri tamamlandı!')
+      }
+      
+      setCompletingOrder(null)
+      setCompletionPayment('')
       loadData()
     } catch (error) {
       console.error('Error completing work order:', error)
@@ -134,14 +234,59 @@ export function WorkOrders({ user }: { user: any }) {
     }
   }
 
+  const handleEdit = (order: WorkOrder) => {
+    setEditingOrder(order)
+    setFormData({
+      customerId: order.customerId,
+      personnelIds: order.personnelIds || [],
+      date: order.date?.split('T')[0] || '',
+      description: order.description || '',
+      totalAmount: order.totalAmount?.toString() || '0',
+      paidAmount: order.paidAmount?.toString() || '0',
+      autoApprove: false,
+      isRecurring: false,
+      recurrenceType: 'weekly',
+      recurrenceDay: 3,
+      recurrenceDate: 1,
+      recurrenceWeek: 1,
+      recurrenceWeekday: 0,
+      endDate: new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0]
+    })
+    setIsDialogOpen(true)
+  }
+
+  const handleDelete = async (orderId: string) => {
+    if (!confirm('Bu iş emrini silmek istediğinizden emin misiniz?')) {
+      return
+    }
+
+    try {
+      await apiCall(`/work-orders/${orderId}`, {
+        method: 'DELETE'
+      })
+      loadData()
+    } catch (error: any) {
+      console.error('Error deleting work order:', error)
+      alert(error.message || 'İş emri silinirken hata oluştu')
+    }
+  }
+
   const resetForm = () => {
     setFormData({
       customerId: '',
       personnelIds: [],
-      date: new Date().toISOString().split('T')[0],
+      date: '', // Don't pre-fill with today - force user to select a date
       description: '',
-      estimatedAmount: '',
-      autoApprove: false
+      totalAmount: '',
+      paidAmount: '',
+      autoApprove: false,
+      isRecurring: false,
+      recurrenceType: 'weekly',
+      recurrenceDay: 3,
+      recurrenceDate: 1,
+      recurrenceWeek: 1,
+      recurrenceWeekday: 0,
+      endDate: new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0]
     })
     setEditingOrder(null)
   }
@@ -156,6 +301,26 @@ export function WorkOrders({ user }: { user: any }) {
       .map(id => personnel.find(p => p.id === id)?.name)
       .filter(Boolean)
       .join(', ') || 'Atanmadı'
+  }
+
+  // Check if personnel is assigned to another work order on the same date
+  const isPersonnelAssignedOnDate = (personnelId: string, date: string): { assigned: boolean, customerName: string } => {
+    const dateOnly = date.split('T')[0]
+    const assignedOrder = workOrders.find(wo => {
+      const woDateOnly = wo.date?.split('T')[0]
+      // Skip if it's the order being edited
+      if (editingOrder && wo.id === editingOrder.id) return false
+      // Check if date matches and personnel is assigned and order is not cancelled
+      return woDateOnly === dateOnly && 
+             wo.personnelIds?.includes(personnelId) &&
+             (wo.status === 'draft' || wo.status === 'approved' || wo.status === 'completed')
+    })
+    
+    if (assignedOrder) {
+      const customerName = getCustomerName(assignedOrder.customerId)
+      return { assigned: true, customerName }
+    }
+    return { assigned: false, customerName: '' }
   }
 
   const getStatusBadge = (status: string) => {
@@ -205,7 +370,7 @@ export function WorkOrders({ user }: { user: any }) {
                 Yeni İş Emri
               </Button>
             </DialogTrigger>
-            <DialogContent className="max-w-2xl">
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
               <DialogHeader>
                 <DialogTitle>
                   {editingOrder ? 'İş Emrini Düzenle' : 'Yeni İş Emri Oluştur'}
@@ -218,7 +383,6 @@ export function WorkOrders({ user }: { user: any }) {
                     <Select 
                       value={formData.customerId}
                       onValueChange={(value) => setFormData({ ...formData, customerId: value })}
-                      required
                     >
                       <SelectTrigger>
                         <SelectValue placeholder="Müşteri seçin" />
@@ -233,7 +397,7 @@ export function WorkOrders({ user }: { user: any }) {
                     </Select>
                   </div>
                   <div className="space-y-2">
-                    <Label htmlFor="date">Tarih *</Label>
+                    <Label htmlFor="date">{formData.isRecurring ? 'Başlangıç Tarihi *' : 'Tarih *'}</Label>
                     <Input
                       id="date"
                       type="date"
@@ -246,29 +410,45 @@ export function WorkOrders({ user }: { user: any }) {
                 <div className="space-y-2">
                   <Label>Personel Ata</Label>
                   <div className="border rounded-md p-3 space-y-2 max-h-48 overflow-y-auto">
-                    {personnel.map(person => (
-                      <label key={person.id} className="flex items-center gap-2 cursor-pointer">
-                        <input
-                          type="checkbox"
-                          checked={formData.personnelIds.includes(person.id)}
-                          onChange={(e) => {
-                            if (e.target.checked) {
-                              setFormData({
-                                ...formData,
-                                personnelIds: [...formData.personnelIds, person.id]
-                              })
-                            } else {
-                              setFormData({
-                                ...formData,
-                                personnelIds: formData.personnelIds.filter(id => id !== person.id)
-                              })
-                            }
-                          }}
-                          className="rounded"
-                        />
-                        <span>{person.name} - {person.role}</span>
-                      </label>
-                    ))}
+                    {personnel.map(person => {
+                      const assignmentCheck = isPersonnelAssignedOnDate(person.id, formData.date)
+                      const isAssigned = assignmentCheck.assigned
+                      
+                      return (
+                        <label 
+                          key={person.id} 
+                          className={`flex items-center gap-2 ${isAssigned ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                        >
+                          <input
+                            type="checkbox"
+                            checked={formData.personnelIds.includes(person.id)}
+                            disabled={isAssigned}
+                            onChange={(e) => {
+                              if (e.target.checked) {
+                                setFormData({
+                                  ...formData,
+                                  personnelIds: [...formData.personnelIds, person.id]
+                                })
+                              } else {
+                                setFormData({
+                                  ...formData,
+                                  personnelIds: formData.personnelIds.filter(id => id !== person.id)
+                                })
+                              }
+                            }}
+                            className="rounded"
+                          />
+                          <span className="flex-1">
+                            {person.name} - {person.role}
+                            {isAssigned && (
+                              <span className="ml-2 text-xs text-red-600">
+                                ({assignmentCheck.customerName} için atanmış)
+                              </span>
+                            )}
+                          </span>
+                        </label>
+                      )
+                    })}
                   </div>
                 </div>
                 <div className="space-y-2">
@@ -280,15 +460,31 @@ export function WorkOrders({ user }: { user: any }) {
                     rows={3}
                   />
                 </div>
-                <div className="space-y-2">
-                  <Label htmlFor="amount">Tahmini Tutar (TL)</Label>
-                  <Input
-                    id="amount"
-                    type="number"
-                    step="0.01"
-                    value={formData.estimatedAmount}
-                    onChange={(e) => setFormData({ ...formData, estimatedAmount: e.target.value })}
-                  />
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label htmlFor="totalAmount">Toplam Tutar (TL)</Label>
+                    <Input
+                      id="totalAmount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={formData.totalAmount}
+                      onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
+                      placeholder="0.00"
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="paidAmount">Ödenen Tutar (TL)</Label>
+                    <Input
+                      id="paidAmount"
+                      type="number"
+                      step="0.01"
+                      min="0"
+                      value={formData.paidAmount}
+                      onChange={(e) => setFormData({ ...formData, paidAmount: e.target.value })}
+                      placeholder="0.00"
+                    />
+                  </div>
                 </div>
                 <div className="flex items-center gap-2">
                   <input
@@ -302,11 +498,142 @@ export function WorkOrders({ user }: { user: any }) {
                     Otomatik onayla (Taslak olarak kaydetme)
                   </Label>
                 </div>
+                {!editingOrder && (
+                  <>
+                    <div className="border-t pt-4">
+                      <div className="flex items-center gap-2 mb-4">
+                        <input
+                          type="checkbox"
+                          id="isRecurring"
+                          checked={formData.isRecurring}
+                          onChange={(e) => setFormData({ ...formData, isRecurring: e.target.checked })}
+                          className="rounded"
+                        />
+                        <Label htmlFor="isRecurring" className="cursor-pointer">
+                          🔁 Tekrarlayan İş Emri (Düzenli müşteri için otomatik iş emirleri oluştur)
+                        </Label>
+                      </div>
+                      {formData.isRecurring && (
+                        <div className="space-y-4 bg-blue-50 p-4 rounded-md">
+                          <div className="space-y-2">
+                            <Label htmlFor="recurrenceType">Sıklık</Label>
+                            <Select 
+                              value={formData.recurrenceType}
+                              onValueChange={(value: any) => setFormData({ ...formData, recurrenceType: value })}
+                            >
+                              <SelectTrigger>
+                                <SelectValue />
+                              </SelectTrigger>
+                              <SelectContent>
+                                <SelectItem value="weekly">Her Hafta</SelectItem>
+                                <SelectItem value="biweekly">İki Haftada Bir</SelectItem>
+                                <SelectItem value="monthly-date">Her Ayın Belirli Günü</SelectItem>
+                                <SelectItem value="monthly-weekday">Her Ayın Belirli Haftası</SelectItem>
+                              </SelectContent>
+                            </Select>
+                          </div>
+                          
+                          {(formData.recurrenceType === 'weekly' || formData.recurrenceType === 'biweekly') && (
+                            <div className="space-y-2">
+                              <Label htmlFor="recurrenceDay">Hangi Gün</Label>
+                              <Select 
+                                value={formData.recurrenceDay.toString()}
+                                onValueChange={(value) => setFormData({ ...formData, recurrenceDay: parseInt(value) })}
+                              >
+                                <SelectTrigger>
+                                  <SelectValue />
+                                </SelectTrigger>
+                                <SelectContent>
+                                  <SelectItem value="0">Pazar</SelectItem>
+                                  <SelectItem value="1">Pazartesi</SelectItem>
+                                  <SelectItem value="2">Salı</SelectItem>
+                                  <SelectItem value="3">Çarşamba</SelectItem>
+                                  <SelectItem value="4">Perşembe</SelectItem>
+                                  <SelectItem value="5">Cuma</SelectItem>
+                                  <SelectItem value="6">Cumartesi</SelectItem>
+                                </SelectContent>
+                              </Select>
+                            </div>
+                          )}
+
+                          {formData.recurrenceType === 'monthly-date' && (
+                            <div className="space-y-2">
+                              <Label htmlFor="recurrenceDate">Ayın Hangi Günü (1-31)</Label>
+                              <Input
+                                id="recurrenceDate"
+                                type="number"
+                                min="1"
+                                max="31"
+                                value={formData.recurrenceDate}
+                                onChange={(e) => setFormData({ ...formData, recurrenceDate: parseInt(e.target.value) })}
+                              />
+                            </div>
+                          )}
+
+                          {formData.recurrenceType === 'monthly-weekday' && (
+                            <div className="grid grid-cols-2 gap-4">
+                              <div className="space-y-2">
+                                <Label htmlFor="recurrenceWeek">Hangi Hafta</Label>
+                                <Select 
+                                  value={formData.recurrenceWeek.toString()}
+                                  onValueChange={(value) => setFormData({ ...formData, recurrenceWeek: parseInt(value) })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="1">İlk Hafta</SelectItem>
+                                    <SelectItem value="2">İkinci Hafta</SelectItem>
+                                    <SelectItem value="3">Üçüncü Hafta</SelectItem>
+                                    <SelectItem value="4">Dördüncü Hafta</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              <div className="space-y-2">
+                                <Label htmlFor="recurrenceWeekday">Hangi Gün</Label>
+                                <Select 
+                                  value={formData.recurrenceWeekday.toString()}
+                                  onValueChange={(value) => setFormData({ ...formData, recurrenceWeekday: parseInt(value) })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="0">Pazar</SelectItem>
+                                    <SelectItem value="1">Pazartesi</SelectItem>
+                                    <SelectItem value="2">Salı</SelectItem>
+                                    <SelectItem value="3">Çarşamba</SelectItem>
+                                    <SelectItem value="4">Perşembe</SelectItem>
+                                    <SelectItem value="5">Cuma</SelectItem>
+                                    <SelectItem value="6">Cumartesi</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                            </div>
+                          )}
+
+                          <div className="space-y-2">
+                            <Label htmlFor="endDate">Bitiş Tarihi (Son iş emri tarihi)</Label>
+                            <Input
+                              id="endDate"
+                              type="date"
+                              value={formData.endDate}
+                              onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                            />
+                            <p className="text-xs text-gray-500">
+                              Bu tarih dahil olmak üzere iş emirleri oluşturulacak
+                            </p>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  </>
+                )}
                 <div className="flex justify-end gap-2">
                   <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
                     İptal
                   </Button>
-                  <Button type="submit">Kaydet</Button>
+                  <Button type="submit">{formData.isRecurring && !editingOrder ? 'Tekrarlayan İş Emirleri Oluştur' : 'Kaydet'}</Button>
                 </div>
               </form>
             </DialogContent>
@@ -373,14 +700,26 @@ export function WorkOrders({ user }: { user: any }) {
                         </div>
                       </CardHeader>
                       <CardContent className="space-y-3">
-                        <div className="grid grid-cols-2 gap-4 text-sm">
+                        <div className="space-y-2 text-sm">
                           <div>
                             <span className="text-gray-500">Personel: </span>
                             {getPersonnelNames(order.personnelIds || [])}
                           </div>
-                          <div>
-                            <span className="text-gray-500">Tahmini Tutar: </span>
-                            {order.estimatedAmount ? `${order.estimatedAmount} TL` : '-'}
+                          <div className="grid grid-cols-3 gap-2">
+                            <div>
+                              <span className="text-gray-500">Toplam: </span>
+                              <span>{order.totalAmount ? `${order.totalAmount.toFixed(2)} TL` : '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Ödenen: </span>
+                              <span>{order.paidAmount ? `${order.paidAmount.toFixed(2)} TL` : '-'}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Kalan: </span>
+                              <span className={(order.totalAmount - order.paidAmount) > 0 ? 'text-red-600' : 'text-green-600'}>
+                                {order.totalAmount !== undefined && order.paidAmount !== undefined ? `${(order.totalAmount - order.paidAmount).toFixed(2)} TL` : '-'}
+                              </span>
+                            </div>
                           </div>
                         </div>
                         {order.description && (
@@ -389,26 +728,41 @@ export function WorkOrders({ user }: { user: any }) {
                         {canEdit && (
                           <div className="flex gap-2 pt-2 border-t">
                             {order.status === 'draft' && (
-                              <Button
-                                size="sm"
-                                onClick={() => handleApprove(order.id)}
-                              >
-                                <CheckCircle className="h-4 w-4 mr-1" />
-                                Onayla
-                              </Button>
+                              <>
+                                <Button
+                                  size="sm"
+                                  variant="outline"
+                                  onClick={() => handleEdit(order)}
+                                >
+                                  <Edit className="h-4 w-4 mr-1" />
+                                  Düzenle
+                                </Button>
+                                <Button
+                                  size="sm"
+                                  onClick={() => handleApprove(order.id)}
+                                >
+                                  <CheckCircle className="h-4 w-4 mr-1" />
+                                  Onayla
+                                </Button>
+                              </>
                             )}
                             {order.status === 'approved' && (
                               <Button
                                 size="sm"
                                 variant="outline"
-                                onClick={() => {
-                                  const amount = prompt('Gerçekleşen tutarı girin (TL):')
-                                  if (amount) {
-                                    handleComplete(order.id, parseFloat(amount))
-                                  }
-                                }}
+                                onClick={() => handleCompleteClick(order)}
                               >
                                 Tamamla
+                              </Button>
+                            )}
+                            {userRole === 'admin' && (order.status === 'approved' || order.status === 'completed') && (
+                              <Button
+                                size="sm"
+                                variant="destructive"
+                                onClick={() => handleDelete(order.id)}
+                              >
+                                <Trash2 className="h-4 w-4 mr-1" />
+                                Sil
                               </Button>
                             )}
                           </div>
@@ -421,6 +775,80 @@ export function WorkOrders({ user }: { user: any }) {
             ))
         )}
       </div>
+
+      {/* Completion Payment Dialog */}
+      <Dialog open={!!completingOrder} onOpenChange={(open) => {
+        if (!open) {
+          setCompletingOrder(null)
+          setCompletionPayment('')
+        }
+      }}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>İş Emrini Tamamla</DialogTitle>
+          </DialogHeader>
+          {completingOrder && (
+            <div className="space-y-4">
+              <div className="space-y-2 p-4 bg-gray-50 rounded-md">
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">Müşteri:</span>
+                  <span className="text-sm font-medium">{getCustomerName(completingOrder.customerId)}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">Toplam Tutar:</span>
+                  <span className="text-sm font-medium">{(completingOrder.totalAmount || 0).toFixed(2)} TL</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-sm text-gray-600">Önceden Ödenen:</span>
+                  <span className="text-sm font-medium">{(completingOrder.paidAmount || 0).toFixed(2)} TL</span>
+                </div>
+                <div className="flex justify-between border-t pt-2">
+                  <span className="text-sm text-gray-600">Kalan Tutar:</span>
+                  <span className="text-sm font-medium text-red-600">
+                    {((completingOrder.totalAmount || 0) - (completingOrder.paidAmount || 0)).toFixed(2)} TL
+                  </span>
+                </div>
+              </div>
+              <div className="space-y-2">
+                <Label htmlFor="completionPayment">Müşteriden Alınan Tutar (TL)</Label>
+                <Input
+                  id="completionPayment"
+                  type="number"
+                  step="0.01"
+                  min="0"
+                  value={completionPayment}
+                  onChange={(e) => setCompletionPayment(e.target.value)}
+                  placeholder="0.00"
+                  autoFocus
+                />
+                <p className="text-xs text-gray-500">
+                  Bu işte müşteriden ne kadar tahsilat yaptınız?
+                </p>
+                {parseFloat(completionPayment) > 0 && (
+                  <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs text-blue-800">
+                    💡 <strong>Bilgi:</strong> Girdiğiniz {parseFloat(completionPayment).toFixed(2)} TL tahsilat, bugünün tarihinde günlük nakit akışına ve Finance bölümüne otomatik olarak kaydedilecektir.
+                  </div>
+                )}
+              </div>
+              <div className="flex justify-end gap-2">
+                <Button
+                  type="button"
+                  variant="outline"
+                  onClick={() => {
+                    setCompletingOrder(null)
+                    setCompletionPayment('')
+                  }}
+                >
+                  İptal
+                </Button>
+                <Button onClick={handleCompleteSubmit}>
+                  İş Emrini Tamamla
+                </Button>
+              </div>
+            </div>
+          )}
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

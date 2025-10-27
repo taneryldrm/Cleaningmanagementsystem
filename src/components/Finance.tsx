@@ -7,7 +7,7 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Badge } from './ui/badge'
-import { Plus, TrendingUp, TrendingDown, Filter } from 'lucide-react'
+import { Plus, TrendingUp, TrendingDown, Filter, Trash2 } from 'lucide-react'
 import { Textarea } from './ui/textarea'
 
 interface Transaction {
@@ -30,6 +30,9 @@ export function Finance({ user }: { user: any }) {
   const [filterType, setFilterType] = useState<string>('all')
   const [startDate, setStartDate] = useState('')
   const [endDate, setEndDate] = useState('')
+
+  const userRole = user?.user_metadata?.role
+  const canDelete = userRole === 'admin'
 
   const [formData, setFormData] = useState({
     type: 'income' as 'income' | 'expense',
@@ -70,7 +73,7 @@ export function Finance({ user }: { user: any }) {
         date: formData.date,
         category: formData.category,
         description: formData.description,
-        relatedCustomerId: formData.relatedCustomerId || null
+        relatedCustomerId: formData.relatedCustomerId && formData.relatedCustomerId !== 'none' ? formData.relatedCustomerId : null
       }
 
       await apiCall('/transactions', {
@@ -96,6 +99,20 @@ export function Finance({ user }: { user: any }) {
       description: '',
       relatedCustomerId: ''
     })
+  }
+
+  const handleDelete = async (transactionId: string) => {
+    if (!confirm('Bu işlemi silmek istediğinizden emin misiniz?')) {
+      return
+    }
+
+    try {
+      await apiCall(`/transactions/${transactionId}`, { method: 'DELETE' })
+      loadData()
+    } catch (error) {
+      console.error('Error deleting transaction:', error)
+      alert('İşlem silinirken hata oluştu: ' + (error as Error).message)
+    }
   }
 
   const formatCurrency = (amount: number) => {
@@ -218,7 +235,7 @@ export function Finance({ user }: { user: any }) {
                       <SelectValue placeholder="Müşteri seçin" />
                     </SelectTrigger>
                     <SelectContent>
-                      <SelectItem value="">Seçim Yok</SelectItem>
+                      <SelectItem value="none">Seçim Yok</SelectItem>
                       {customers.map(customer => (
                         <SelectItem key={customer.id} value={customer.id}>
                           {customer.name}
@@ -371,11 +388,23 @@ export function Finance({ user }: { user: any }) {
                         <span>Kaydeden: {transaction.createdByName || 'Bilinmiyor'}</span>
                       </div>
                     </div>
-                    <div className={`text-2xl ${
-                      transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
-                    }`}>
-                      {transaction.type === 'income' ? '+' : '-'}
-                      {formatCurrency(transaction.amount)}
+                    <div className="flex items-center gap-3">
+                      <div className={`text-2xl ${
+                        transaction.type === 'income' ? 'text-green-600' : 'text-red-600'
+                      }`}>
+                        {transaction.type === 'income' ? '+' : '-'}
+                        {formatCurrency(transaction.amount)}
+                      </div>
+                      {canDelete && (
+                        <Button
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => handleDelete(transaction.id)}
+                          className="text-red-600 hover:text-red-700 hover:bg-red-50"
+                        >
+                          <Trash2 className="h-4 w-4" />
+                        </Button>
+                      )}
                     </div>
                   </div>
                 </CardContent>

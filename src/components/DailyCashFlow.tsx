@@ -22,6 +22,8 @@ interface CustomerCollection {
   date: string
   description?: string
   relatedWorkOrderId?: string
+  createdByName?: string
+  createdBy?: string
 }
 
 interface GeneralExpense {
@@ -31,6 +33,9 @@ interface GeneralExpense {
   invoiceNo: string
   amount: number
   date: string
+  paymentMethod?: 'cash' | 'card'
+  createdByName?: string
+  createdBy?: string
 }
 
 interface CashFlowSummary {
@@ -76,7 +81,8 @@ export function DailyCashFlow({ user }: { user: any }) {
     description: '',
     invoiceDate: '',
     invoiceNo: '',
-    amount: ''
+    amount: '',
+    paymentMethod: 'cash' as 'cash' | 'card'
   })
 
   const userRole = user?.user_metadata?.role
@@ -210,7 +216,8 @@ export function DailyCashFlow({ user }: { user: any }) {
           invoiceDate: expenseFormData.invoiceDate,
           invoiceNo: expenseFormData.invoiceNo,
           amount: parseFloat(expenseFormData.amount),
-          date: expenseDate
+          date: expenseDate,
+          paymentMethod: expenseFormData.paymentMethod
         })
       })
 
@@ -242,7 +249,8 @@ export function DailyCashFlow({ user }: { user: any }) {
         description: expense.description,
         invoiceDate: expense.invoiceDate,
         invoiceNo: expense.invoiceNo,
-        amount: expense.amount.toString()
+        amount: expense.amount.toString(),
+        paymentMethod: expense.paymentMethod || 'cash'
       })
     } else {
       resetExpenseForm()
@@ -255,7 +263,8 @@ export function DailyCashFlow({ user }: { user: any }) {
       description: '',
       invoiceDate: '',
       invoiceNo: '',
-      amount: ''
+      amount: '',
+      paymentMethod: 'cash'
     })
     setEditingExpense(null)
   }
@@ -309,11 +318,12 @@ export function DailyCashFlow({ user }: { user: any }) {
               <table className="w-full border-collapse">
                 <thead className="bg-gray-100">
                   <tr>
-                    <th className="border px-2 py-2 text-left text-xs">SIRA NO</th>
+                    <th className="border px-2 py-2 text-left text-xs">SIRA</th>
                     <th className="border px-2 py-2 text-left text-xs">MÜŞTERİ İSMİ</th>
                     <th className="border px-2 py-2 text-left text-xs">AÇIKLAMA</th>
                     <th className="border px-2 py-2 text-left text-xs">İŞ TARİHİ</th>
                     <th className="border px-2 py-2 text-right text-xs">TAHSİLAT</th>
+                    <th className="border px-2 py-2 text-left text-xs">KAYDEDEN</th>
                     {canEdit && <th className="border px-2 py-2 text-center text-xs">İŞLEM</th>}
                   </tr>
                 </thead>
@@ -332,6 +342,9 @@ export function DailyCashFlow({ user }: { user: any }) {
                         </td>
                         <td className="border px-2 py-2 text-sm text-right">
                           {collection ? collection.amount.toLocaleString('tr-TR') : '0'}
+                        </td>
+                        <td className="border px-2 py-2 text-xs text-gray-500">
+                          {collection?.createdByName || ''}
                         </td>
                         {canEdit && (
                           <td className="border px-2 py-2 text-center">
@@ -372,6 +385,7 @@ export function DailyCashFlow({ user }: { user: any }) {
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.totalCollection.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                   <tr className="bg-yellow-50 font-semibold">
@@ -379,6 +393,7 @@ export function DailyCashFlow({ user }: { user: any }) {
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.totalWagesPaid.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                   <tr className="bg-yellow-50 font-semibold">
@@ -386,6 +401,7 @@ export function DailyCashFlow({ user }: { user: any }) {
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.previousMonthCash.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                   <tr className="bg-blue-100 font-semibold">
@@ -393,6 +409,7 @@ export function DailyCashFlow({ user }: { user: any }) {
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.todayCashTotal.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                 </tbody>
@@ -421,7 +438,9 @@ export function DailyCashFlow({ user }: { user: any }) {
                   <tr>
                     <th className="border px-2 py-2 text-left text-xs">HARCAMA DETAYI</th>
                     <th className="border px-2 py-2 text-left text-xs">TARİHİ VE FİŞ NO</th>
+                    <th className="border px-2 py-2 text-center text-xs">ÖDEME</th>
                     <th className="border px-2 py-2 text-right text-xs">HARCAMA TUTARI</th>
+                    <th className="border px-2 py-2 text-left text-xs">KAYDEDEN</th>
                     {canEdit && <th className="border px-2 py-2 text-center text-xs">İŞLEM</th>}
                   </tr>
                 </thead>
@@ -429,13 +448,19 @@ export function DailyCashFlow({ user }: { user: any }) {
                   {[...Array(15)].map((_, idx) => {
                     const expense = expenses[idx]
                     return (
-                      <tr key={idx} className="hover:bg-gray-50">
+                      <tr key={idx} className={`hover:bg-gray-50 ${expense?.paymentMethod === 'card' ? 'bg-purple-50' : ''}`}>
                         <td className="border px-2 py-2 text-sm">{expense?.description || ''}</td>
                         <td className="border px-2 py-2 text-sm">
                           {expense ? `${expense.invoiceDate ? new Date(expense.invoiceDate).toLocaleDateString('tr-TR') : ''} ${expense.invoiceNo || ''}` : ''}
                         </td>
+                        <td className="border px-2 py-2 text-sm text-center">
+                          {expense ? (expense.paymentMethod === 'card' ? '💳 Kart' : '💵 Nakit') : ''}
+                        </td>
                         <td className="border px-2 py-2 text-sm text-right">
                           {expense ? expense.amount.toLocaleString('tr-TR') : '0'}
+                        </td>
+                        <td className="border px-2 py-2 text-xs text-gray-500">
+                          {expense?.createdByName || ''}
                         </td>
                         {canEdit && (
                           <td className="border px-2 py-2 text-center">
@@ -464,24 +489,27 @@ export function DailyCashFlow({ user }: { user: any }) {
                   })}
                   {/* Summary rows */}
                   <tr className="bg-yellow-50 font-semibold">
-                    <td colSpan={2} className="border px-2 py-2 text-sm">BUGÜN ÖDENEN GİDERLER TOPLAMI</td>
+                    <td colSpan={3} className="border px-2 py-2 text-sm">BUGÜN ÖDENEN NAKİT GİDERLER TOPLAMI</td>
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.totalExpenses.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                   <tr className="bg-yellow-50 font-semibold">
-                    <td colSpan={2} className="border px-2 py-2 text-sm">BUGÜN İTİBARİYLE TOPLAM YÖMİYE BORCU</td>
+                    <td colSpan={3} className="border px-2 py-2 text-sm">BUGÜN İTİBARİYLE TOPLAM YÖMİYE BORCU</td>
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.totalWageDebt.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                   <tr className="bg-blue-100 font-semibold">
-                    <td colSpan={2} className="border px-2 py-2 text-sm">BUGÜN TAHAKKUK ÖDEN YÖMİYE TOPLAMI</td>
+                    <td colSpan={3} className="border px-2 py-2 text-sm">BUGÜN TAHAKKUK ÖDEN YÖMİYE TOPLAMI</td>
                     <td className="border px-2 py-2 text-sm text-right">
                       {summary.totalAccruedWages.toLocaleString('tr-TR')}
                     </td>
+                    <td className="border"></td>
                     {canEdit && <td className="border"></td>}
                   </tr>
                 </tbody>
@@ -577,10 +605,15 @@ export function DailyCashFlow({ user }: { user: any }) {
           </CardHeader>
           <CardContent className="space-y-3">
             {expenses.map((expense) => (
-              <div key={expense.id} className="p-3 border rounded-md">
+              <div key={expense.id} className={`p-3 border rounded-md ${expense.paymentMethod === 'card' ? 'bg-purple-50 border-purple-200' : ''}`}>
                 <div className="flex items-start justify-between mb-2">
                   <div className="flex-1">
-                    <div className="text-sm">{expense.description}</div>
+                    <div className="flex items-center gap-2">
+                      <div className="text-sm">{expense.description}</div>
+                      {expense.paymentMethod === 'card' && (
+                        <span className="text-xs bg-purple-100 text-purple-700 px-2 py-0.5 rounded">💳 Kart</span>
+                      )}
+                    </div>
                     <div className="text-xs text-gray-500">
                       {expense.invoiceDate && new Date(expense.invoiceDate).toLocaleDateString('tr-TR')} {expense.invoiceNo}
                     </div>
@@ -601,7 +634,7 @@ export function DailyCashFlow({ user }: { user: any }) {
             ))}
             <div className="space-y-2 pt-3 border-t">
               <div className="flex justify-between text-sm">
-                <span>Giderler Toplamı:</span>
+                <span>Nakit Giderler Toplamı:</span>
                 <span className="font-semibold">{summary.totalExpenses.toLocaleString('tr-TR')} ₺</span>
               </div>
               <div className="flex justify-between text-sm">
@@ -739,6 +772,24 @@ export function DailyCashFlow({ user }: { user: any }) {
                 placeholder="0.00"
                 required
               />
+            </div>
+            <div className="space-y-2">
+              <Label htmlFor="paymentMethod">Ödeme Şekli *</Label>
+              <Select
+                value={expenseFormData.paymentMethod}
+                onValueChange={(value: 'cash' | 'card') => setExpenseFormData({ ...expenseFormData, paymentMethod: value })}
+              >
+                <SelectTrigger>
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="cash">💵 Nakit</SelectItem>
+                  <SelectItem value="card">💳 Kart</SelectItem>
+                </SelectContent>
+              </Select>
+              <p className="text-xs text-gray-500">
+                ℹ️ Kartla yapılan ödemeler toplam gidere dahil edilmez
+              </p>
             </div>
             <div className="flex justify-end gap-2">
               <Button type="button" variant="outline" onClick={() => setIsExpenseDialogOpen(false)}>

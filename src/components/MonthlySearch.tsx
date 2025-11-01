@@ -4,12 +4,12 @@ import { Button } from './ui/button'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
-import { Search, DollarSign, Users, FileText, ShoppingCart, Wallet } from 'lucide-react'
+import { Search, DollarSign, Users, FileText, ShoppingCart, Wallet, Calendar } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Badge } from './ui/badge'
+import { Checkbox } from './ui/checkbox'
 
 interface CollectionResult {
-  day: number
   customerName: string
   workDate: string
   amount: number
@@ -18,7 +18,6 @@ interface CollectionResult {
 }
 
 interface ExpenseResult {
-  day: number
   description: string
   invoiceDate: string
   amount: number
@@ -26,7 +25,6 @@ interface ExpenseResult {
 }
 
 interface PayrollResult {
-  day: number
   personnelName: string
   dailyWage: number
   dailyPayment: number
@@ -35,7 +33,6 @@ interface PayrollResult {
 }
 
 interface TransactionResult {
-  day: number
   category: string
   description: string
   amount: number
@@ -44,7 +41,6 @@ interface TransactionResult {
 }
 
 interface WorkOrderResult {
-  day: number
   customerName: string
   totalAmount: number
   paidAmount: number
@@ -53,8 +49,9 @@ interface WorkOrderResult {
 
 export function MonthlySearch({ user }: { user: any }) {
   const [searchKeyword, setSearchKeyword] = useState('')
-  const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth() + 1)
-  const [selectedYear, setSelectedYear] = useState(new Date().getFullYear())
+  const [useAllDates, setUseAllDates] = useState(true)
+  const [startDate, setStartDate] = useState('')
+  const [endDate, setEndDate] = useState('')
   const [collectionResults, setCollectionResults] = useState<CollectionResult[]>([])
   const [expenseResults, setExpenseResults] = useState<ExpenseResult[]>([])
   const [payrollResults, setPayrollResults] = useState<PayrollResult[]>([])
@@ -69,34 +66,36 @@ export function MonthlySearch({ user }: { user: any }) {
   const [loading, setLoading] = useState(false)
   const [hasSearched, setHasSearched] = useState(false)
 
-  const months = [
-    { value: 1, label: 'Ocak' },
-    { value: 2, label: 'Şubat' },
-    { value: 3, label: 'Mart' },
-    { value: 4, label: 'Nisan' },
-    { value: 5, label: 'Mayıs' },
-    { value: 6, label: 'Haziran' },
-    { value: 7, label: 'Temmuz' },
-    { value: 8, label: 'Ağustos' },
-    { value: 9, label: 'Eylül' },
-    { value: 10, label: 'Ekim' },
-    { value: 11, label: 'Kasım' },
-    { value: 12, label: 'Aralık' }
-  ]
-
-  const years = Array.from({ length: 5 }, (_, i) => new Date().getFullYear() - 2 + i)
-
   const handleSearch = async () => {
     if (!searchKeyword.trim()) {
       alert('Lütfen arama kelimesi giriniz')
       return
     }
 
+    // Validate date range if not using all dates
+    if (!useAllDates) {
+      if (!startDate || !endDate) {
+        alert('Lütfen başlangıç ve bitiş tarihlerini giriniz')
+        return
+      }
+      if (startDate > endDate) {
+        alert('Başlangıç tarihi bitiş tarihinden sonra olamaz')
+        return
+      }
+    }
+
     setLoading(true)
     setHasSearched(true)
 
     try {
-      const response = await apiCall(`/monthly-search?keyword=${encodeURIComponent(searchKeyword)}&month=${selectedMonth}&year=${selectedYear}`)
+      let url = `/history-search?keyword=${encodeURIComponent(searchKeyword)}`
+      
+      // Add date filters if not using all dates
+      if (!useAllDates && startDate && endDate) {
+        url += `&startDate=${startDate}&endDate=${endDate}`
+      }
+      
+      const response = await apiCall(url)
       
       console.log('Search response:', response)
       
@@ -126,57 +125,73 @@ export function MonthlySearch({ user }: { user: any }) {
       {/* Search Controls */}
       <Card>
         <CardHeader>
-          <CardTitle>Aylık Arama ve Raporlama - Global Arama</CardTitle>
-          <p className="text-sm text-gray-500">Müşteri/personel adı, telefon numarası, tutar veya açıklama ile arama yapın</p>
+          <CardTitle>Geçmiş Arama - Global Arama Sistemi</CardTitle>
+          <p className="text-sm text-gray-500">Tüm geçmiş kayıtlarınızda müşteri/personel adı, telefon numarası, tutar veya açıklama ile arama yapın</p>
         </CardHeader>
         <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-            <div className="space-y-2">
-              <Label htmlFor="searchKeyword">Aranacak Kelime / Tutar / Telefon</Label>
-              <Input
-                id="searchKeyword"
-                value={searchKeyword}
-                onChange={(e) => setSearchKeyword(e.target.value)}
-                placeholder="Örn: Ahmet, 5551234567, 3000"
-                onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
-              />
+          <div className="space-y-4">
+            {/* Keyword Input */}
+            <div className="flex flex-col md:flex-row gap-4">
+              <div className="flex-1 space-y-2">
+                <Label htmlFor="searchKeyword">Aranacak Kelime / Tutar / Telefon</Label>
+                <Input
+                  id="searchKeyword"
+                  value={searchKeyword}
+                  onChange={(e) => setSearchKeyword(e.target.value)}
+                  placeholder="Örn: Ahmet, 5551234567, 3000"
+                  onKeyPress={(e) => e.key === 'Enter' && handleSearch()}
+                />
+              </div>
+              <div className="space-y-2 md:w-48">
+                <Label>&nbsp;</Label>
+                <Button onClick={handleSearch} disabled={loading} className="w-full">
+                  <Search className="h-4 w-4 mr-2" />
+                  {loading ? 'Aranıyor...' : 'Ara'}
+                </Button>
+              </div>
             </div>
-            <div className="space-y-2">
-              <Label htmlFor="month">Ay</Label>
-              <Select value={selectedMonth.toString()} onValueChange={(value) => setSelectedMonth(parseInt(value))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {months.map(month => (
-                    <SelectItem key={month.value} value={month.value.toString()}>
-                      {month.label}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label htmlFor="year">Yıl</Label>
-              <Select value={selectedYear.toString()} onValueChange={(value) => setSelectedYear(parseInt(value))}>
-                <SelectTrigger>
-                  <SelectValue />
-                </SelectTrigger>
-                <SelectContent>
-                  {years.map(year => (
-                    <SelectItem key={year} value={year.toString()}>
-                      {year}
-                    </SelectItem>
-                  ))}
-                </SelectContent>
-              </Select>
-            </div>
-            <div className="space-y-2">
-              <Label>&nbsp;</Label>
-              <Button onClick={handleSearch} disabled={loading} className="w-full">
-                <Search className="h-4 w-4 mr-2" />
-                {loading ? 'Aranıyor...' : 'Ara'}
-              </Button>
+
+            {/* Date Filter Section */}
+            <div className="border-t pt-4">
+              <div className="flex items-center gap-2 mb-3">
+                <Checkbox 
+                  id="useAllDates" 
+                  checked={useAllDates}
+                  onCheckedChange={(checked) => setUseAllDates(checked === true)}
+                />
+                <Label htmlFor="useAllDates" className="cursor-pointer">
+                  Tüm tarihlerde ara (tarih filtresi olmadan)
+                </Label>
+              </div>
+              
+              {!useAllDates && (
+                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pl-6">
+                  <div className="space-y-2">
+                    <Label htmlFor="startDate" className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4" />
+                      Başlangıç Tarihi
+                    </Label>
+                    <Input
+                      id="startDate"
+                      type="date"
+                      value={startDate}
+                      onChange={(e) => setStartDate(e.target.value)}
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="endDate" className="flex items-center gap-2">
+                      <Calendar className="h-4 w-4" />
+                      Bitiş Tarihi
+                    </Label>
+                    <Input
+                      id="endDate"
+                      type="date"
+                      value={endDate}
+                      onChange={(e) => setEndDate(e.target.value)}
+                    />
+                  </div>
+                </div>
+              )}
             </div>
           </div>
 
@@ -184,7 +199,14 @@ export function MonthlySearch({ user }: { user: any }) {
             <div className="mt-4 p-4 bg-blue-50 rounded-md">
               <div className="flex items-center justify-between flex-wrap gap-3">
                 <div>
-                  <span className="font-semibold">Arama:</span> "{searchKeyword}" - {months.find(m => m.value === selectedMonth)?.label} {selectedYear}
+                  <span className="font-semibold">Arama:</span> "{searchKeyword}" - 
+                  {useAllDates ? (
+                    <span className="text-blue-600"> Tüm Geçmiş Kayıtlar</span>
+                  ) : (
+                    <span className="text-blue-600">
+                      {' '}{new Date(startDate).toLocaleDateString('tr-TR')} - {new Date(endDate).toLocaleDateString('tr-TR')}
+                    </span>
+                  )}
                 </div>
                 <div className="flex flex-wrap gap-3 text-sm">
                   <Badge variant="outline" className="bg-green-50">
@@ -231,7 +253,7 @@ export function MonthlySearch({ user }: { user: any }) {
                   <table className="w-full border-collapse">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="border px-3 py-2 text-xs text-left">GÜN</th>
+                        <th className="border px-3 py-2 text-xs text-left">TARİH</th>
                         <th className="border px-3 py-2 text-xs text-left">MÜŞTERİ</th>
                         <th className="border px-3 py-2 text-xs text-left">AÇIKLAMA</th>
                         <th className="border px-3 py-2 text-xs text-left">İŞ TARİHİ</th>
@@ -241,7 +263,9 @@ export function MonthlySearch({ user }: { user: any }) {
                     <tbody>
                       {collectionResults.map((item, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
-                          <td className="border px-3 py-2 text-sm">{item.day}. GÜN</td>
+                          <td className="border px-3 py-2 text-sm">
+                            {new Date(item.date).toLocaleDateString('tr-TR')}
+                          </td>
                           <td className="border px-3 py-2 text-sm bg-yellow-50">{item.customerName}</td>
                           <td className="border px-3 py-2 text-sm text-gray-600 italic">
                             {item.description || '-'}
@@ -281,16 +305,18 @@ export function MonthlySearch({ user }: { user: any }) {
                   <table className="w-full border-collapse">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="border px-3 py-2 text-xs text-left">GÜN</th>
-                        <th className="border px-3 py-2 text-xs text-left">AÇIKLAMA</th>
                         <th className="border px-3 py-2 text-xs text-left">TARİH</th>
+                        <th className="border px-3 py-2 text-xs text-left">AÇIKLAMA</th>
+                        <th className="border px-3 py-2 text-xs text-left">FATURA TARİHİ</th>
                         <th className="border px-3 py-2 text-xs text-right">TUTAR</th>
                       </tr>
                     </thead>
                     <tbody>
                       {expenseResults.map((item, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
-                          <td className="border px-3 py-2 text-sm">{item.day}.</td>
+                          <td className="border px-3 py-2 text-sm">
+                            {new Date(item.date).toLocaleDateString('tr-TR')}
+                          </td>
                           <td className="border px-3 py-2 text-sm bg-yellow-50">{item.description}</td>
                           <td className="border px-3 py-2 text-sm">
                             {item.invoiceDate ? new Date(item.invoiceDate).toLocaleDateString('tr-TR') : '-'}
@@ -327,7 +353,7 @@ export function MonthlySearch({ user }: { user: any }) {
                   <table className="w-full border-collapse">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="border px-3 py-2 text-xs text-left">GÜN</th>
+                        <th className="border px-3 py-2 text-xs text-left">TARİH</th>
                         <th className="border px-3 py-2 text-xs text-left">PERSONEL</th>
                         <th className="border px-3 py-2 text-xs text-right">GÜNLÜK YÖMİYE</th>
                         <th className="border px-3 py-2 text-xs text-right">ÖDEME</th>
@@ -337,7 +363,9 @@ export function MonthlySearch({ user }: { user: any }) {
                     <tbody>
                       {payrollResults.map((item, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
-                          <td className="border px-3 py-2 text-sm">{item.day}.</td>
+                          <td className="border px-3 py-2 text-sm">
+                            {new Date(item.date).toLocaleDateString('tr-TR')}
+                          </td>
                           <td className="border px-3 py-2 text-sm bg-yellow-50">{item.personnelName}</td>
                           <td className="border px-3 py-2 text-sm text-right">
                             {item.dailyWage.toLocaleString('tr-TR')} ₺
@@ -381,7 +409,7 @@ export function MonthlySearch({ user }: { user: any }) {
                   <table className="w-full border-collapse">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="border px-3 py-2 text-xs text-left">GÜN</th>
+                        <th className="border px-3 py-2 text-xs text-left">TARİH</th>
                         <th className="border px-3 py-2 text-xs text-left">TİP</th>
                         <th className="border px-3 py-2 text-xs text-left">KATEGORİ</th>
                         <th className="border px-3 py-2 text-xs text-left">AÇIKLAMA</th>
@@ -391,7 +419,9 @@ export function MonthlySearch({ user }: { user: any }) {
                     <tbody>
                       {transactionResults.map((item, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
-                          <td className="border px-3 py-2 text-sm">{item.day}.</td>
+                          <td className="border px-3 py-2 text-sm">
+                            {new Date(item.date).toLocaleDateString('tr-TR')}
+                          </td>
                           <td className="border px-3 py-2 text-sm">
                             <Badge variant={item.transactionType === 'income' ? 'default' : 'secondary'}>
                               {item.transactionType === 'income' ? 'Gelir' : 'Gider'}
@@ -428,7 +458,7 @@ export function MonthlySearch({ user }: { user: any }) {
                   <table className="w-full border-collapse">
                     <thead className="bg-gray-100">
                       <tr>
-                        <th className="border px-3 py-2 text-xs text-left">GÜN</th>
+                        <th className="border px-3 py-2 text-xs text-left">TARİH</th>
                         <th className="border px-3 py-2 text-xs text-left">MÜŞTERİ</th>
                         <th className="border px-3 py-2 text-xs text-right">TOPLAM TUTAR</th>
                         <th className="border px-3 py-2 text-xs text-right">ÖDENEN</th>
@@ -438,7 +468,9 @@ export function MonthlySearch({ user }: { user: any }) {
                     <tbody>
                       {workOrderResults.map((item, idx) => (
                         <tr key={idx} className="hover:bg-gray-50">
-                          <td className="border px-3 py-2 text-sm">{item.day}.</td>
+                          <td className="border px-3 py-2 text-sm">
+                            {new Date(item.date).toLocaleDateString('tr-TR')}
+                          </td>
                           <td className="border px-3 py-2 text-sm bg-yellow-50">{item.customerName}</td>
                           <td className="border px-3 py-2 text-sm text-right font-semibold">
                             {item.totalAmount.toLocaleString('tr-TR')} ₺

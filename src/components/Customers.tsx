@@ -7,8 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Badge } from './ui/badge'
-import { Plus, Search, Edit, Trash2 } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, Eye, Users, Calendar, DollarSign, Copy, X, CheckCircle, AlertCircle, Clock } from 'lucide-react'
 import { Textarea } from './ui/textarea'
+import { toast } from 'sonner@2.0.3'
 
 interface Customer {
   id: string
@@ -21,6 +22,23 @@ interface Customer {
   createdAt: string
 }
 
+interface WorkOrder {
+  id: string
+  date: string
+  status: string
+  totalAmount: number
+  paidAmount: number
+  description: string
+  personnelIds: string[]
+  personnelPayments: { [key: string]: number }
+  customerId: string
+}
+
+interface Personnel {
+  id: string
+  name: string
+}
+
 export function Customers({ user }: { user: any }) {
   const [customers, setCustomers] = useState<Customer[]>([])
   const [filteredCustomers, setFilteredCustomers] = useState<Customer[]>([])
@@ -29,6 +47,16 @@ export function Customers({ user }: { user: any }) {
   const [filterType, setFilterType] = useState<string>('all')
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingCustomer, setEditingCustomer] = useState<Customer | null>(null)
+  
+  // Detail view states
+  const [viewingCustomer, setViewingCustomer] = useState<Customer | null>(null)
+  const [customerWorkOrders, setCustomerWorkOrders] = useState<WorkOrder[]>([])
+  const [allPersonnel, setAllPersonnel] = useState<Personnel[]>([])
+  const [loadingDetails, setLoadingDetails] = useState(false)
+  
+  // Duplicate work order states
+  const [duplicatingWorkOrder, setDuplicatingWorkOrder] = useState<WorkOrder | null>(null)
+  const [duplicateFormData, setDuplicateFormData] = useState<any>(null)
 
   const [formData, setFormData] = useState({
     name: '',
@@ -44,6 +72,7 @@ export function Customers({ user }: { user: any }) {
 
   useEffect(() => {
     loadCustomers()
+    loadPersonnel()
   }, [])
 
   useEffect(() => {
@@ -58,6 +87,92 @@ export function Customers({ user }: { user: any }) {
       console.error('Error loading customers:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadPersonnel = async () => {
+    try {
+      const result = await apiCall('/personnel')
+      setAllPersonnel(result.personnel || [])
+    } catch (error) {
+      console.error('Error loading personnel:', error)
+    }
+  }
+
+  const loadCustomerDetails = async (customer: Customer) => {
+    setViewingCustomer(customer)
+    setLoadingDetails(true)
+    
+    try {
+      // Load all work orders
+      const result = await apiCall('/work-orders')
+      const allWorkOrders = result.workOrders || []
+      
+      // Filter work orders for this customer
+      const customerOrders = allWorkOrders
+        .filter((wo: WorkOrder) => wo.customerId === customer.id)
+        .sort((a: WorkOrder, b: WorkOrder) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      
+      setCustomerWorkOrders(customerOrders)
+    } catch (error) {
+      console.error('Error loading customer details:', error)
+      toast.error('Müşteri detayları yüklenirken hata oluştu')
+    } finally {
+      setLoadingDetails(false)
+    }
+  }
+
+  const handleDuplicateWorkOrder = (workOrder: WorkOrder) => {
+    setDuplicatingWorkOrder(workOrder)
+    
+    // Pre-fill form with work order data
+    const tomorrow = new Date()
+    tomorrow.setDate(tomorrow.getDate() + 1)
+    
+    setDuplicateFormData({
+      date: tomorrow.toISOString().split('T')[0],
+      time: '09:00',
+      description: workOrder.description || '',
+      totalAmount: workOrder.totalAmount || 0,
+      paidAmount: 0, // Reset paid amount for new order
+      personnelIds: workOrder.personnelIds || [],
+      personnelPayments: { ...workOrder.personnelPayments } || {}
+    })
+  }
+
+  const handleSubmitDuplicate = async (e: React.FormEvent) => {
+    e.preventDefault()
+    
+    if (!duplicateFormData || !duplicatingWorkOrder) return
+    
+    try {
+      const payload = {
+        customerId: duplicatingWorkOrder.customerId,
+        date: `${duplicateFormData.date}T${duplicateFormData.time}:00`,
+        description: duplicateFormData.description,
+        totalAmount: parseFloat(duplicateFormData.totalAmount),
+        paidAmount: parseFloat(duplicateFormData.paidAmount || 0),
+        personnelIds: duplicateFormData.personnelIds,
+        personnelPayments: duplicateFormData.personnelPayments,
+        status: 'draft'
+      }
+      
+      await apiCall('/work-orders', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
+      
+      toast.success('İş emri başarıyla kopyalandı!')
+      setDuplicatingWorkOrder(null)
+      setDuplicateFormData(null)
+      
+      // Reload customer details
+      if (viewingCustomer) {
+        loadCustomerDetails(viewingCustomer)
+      }
+    } catch (error) {
+      console.error('Error duplicating work order:', error)
+      toast.error('İş emri kopyalanırken hata oluştu')
     }
   }
 
@@ -109,9 +224,10 @@ export function Customers({ user }: { user: any }) {
       setIsDialogOpen(false)
       resetForm()
       loadCustomers()
+      toast.success('Müşteri başarıyla kaydedildi!')
     } catch (error) {
       console.error('Error saving customer:', error)
-      alert('Müşteri kaydedilirken hata oluştu')
+      toast.error('Müşteri kaydedilirken hata oluştu')
     }
   }
 
@@ -136,9 +252,10 @@ export function Customers({ user }: { user: any }) {
     try {
       await apiCall(`/customers/${customerId}`, { method: 'DELETE' })
       loadCustomers()
+      toast.success('Müşteri başarıyla silindi!')
     } catch (error) {
       console.error('Error deleting customer:', error)
-      alert('Müşteri silinirken hata oluştu')
+      toast.error('Müşteri silinirken hata oluştu')
     }
   }
 
@@ -170,17 +287,348 @@ export function Customers({ user }: { user: any }) {
     }
   }
 
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return <Badge variant="outline" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Taslak</Badge>
+      case 'approved':
+        return <Badge className="bg-blue-100 text-blue-800"><CheckCircle className="h-3 w-3 mr-1" />Onaylandı</Badge>
+      case 'completed':
+        return <Badge className="bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Tamamlandı</Badge>
+      default:
+        return <Badge variant="secondary">{status}</Badge>
+    }
+  }
+
   const formatCurrency = (amount: number) => {
     return new Intl.NumberFormat('tr-TR', {
       style: 'currency',
-      currency: 'TRY'
+      currency: 'TRY',
+      minimumFractionDigits: 2
     }).format(amount || 0)
+  }
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('tr-TR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })
+  }
+
+  const getPersonnelName = (personnelId: string) => {
+    const personnel = allPersonnel.find(p => p.id === personnelId)
+    return personnel?.name || 'Bilinmiyor'
   }
 
   if (loading) {
     return <div className="flex items-center justify-center h-64">Yükleniyor...</div>
   }
 
+  // Customer Detail View
+  if (viewingCustomer) {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="outline" onClick={() => setViewingCustomer(null)}>
+              <X className="h-4 w-4 mr-2" />
+              Geri
+            </Button>
+            <div>
+              <h1>{viewingCustomer.name}</h1>
+              <Badge className={getTypeColor(viewingCustomer.type)}>
+                {getTypeLabel(viewingCustomer.type)}
+              </Badge>
+            </div>
+          </div>
+        </div>
+
+        {/* Customer Info Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Müşteri Bilgileri</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <div className="text-sm text-gray-500">Telefon</div>
+                <div className="font-medium">{viewingCustomer.contactInfo?.phone || '-'}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">E-posta</div>
+                <div className="font-medium">{viewingCustomer.contactInfo?.email || '-'}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">Adres</div>
+                <div className="font-medium">{viewingCustomer.address || '-'}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">Bakiye</div>
+                <div className={`font-bold text-lg ${viewingCustomer.balance > 0 ? 'text-red-600' : 'text-green-600'}`}>
+                  {formatCurrency(viewingCustomer.balance)}
+                </div>
+              </div>
+            </div>
+            {viewingCustomer.notes && (
+              <div className="mt-4 pt-4 border-t">
+                <div className="text-sm text-gray-500">Notlar</div>
+                <p className="mt-1">{viewingCustomer.notes}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Work Orders List */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              İş Geçmişi ({customerWorkOrders.length} adet)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingDetails ? (
+              <div className="text-center py-8 text-gray-500">Yükleniyor...</div>
+            ) : customerWorkOrders.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                Bu müşteri için henüz iş emri bulunmuyor
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {customerWorkOrders.map((workOrder) => {
+                  const totalPaidToPersonnel = Object.values(workOrder.personnelPayments || {}).reduce((sum, amount) => sum + (amount || 0), 0)
+                  const remainingAmount = workOrder.totalAmount - workOrder.paidAmount
+                  
+                  return (
+                    <div key={workOrder.id} className="border rounded-lg p-4 space-y-3">
+                      {/* Header */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <Calendar className="h-5 w-5 text-gray-600" />
+                          <div>
+                            <div className="font-medium">{formatDate(workOrder.date)}</div>
+                            <div className="text-sm text-gray-500">
+                              {new Date(workOrder.date).toLocaleTimeString('tr-TR', { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                        <div className="flex items-center gap-2">
+                          {getStatusBadge(workOrder.status)}
+                          {canEdit && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDuplicateWorkOrder(workOrder)}
+                            >
+                              <Copy className="h-4 w-4 mr-1" />
+                              Tekrarla
+                            </Button>
+                          )}
+                        </div>
+                      </div>
+
+                      {/* Description */}
+                      {workOrder.description && (
+                        <p className="text-sm text-gray-700">{workOrder.description}</p>
+                      )}
+
+                      {/* Financial Info */}
+                      <div className="grid grid-cols-2 md:grid-cols-4 gap-4 p-3 bg-gray-50 rounded-lg">
+                        <div>
+                          <div className="text-xs text-gray-500">Toplam Tutar</div>
+                          <div className="font-bold text-lg">{formatCurrency(workOrder.totalAmount)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500">Müşteri Ödemesi</div>
+                          <div className="font-bold text-lg text-green-600">{formatCurrency(workOrder.paidAmount)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500">Kalan Borç</div>
+                          <div className={`font-bold text-lg ${remainingAmount > 0 ? 'text-red-600' : 'text-gray-600'}`}>
+                            {formatCurrency(remainingAmount)}
+                          </div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500">Personel Ödemesi</div>
+                          <div className="font-bold text-lg text-blue-600">{formatCurrency(totalPaidToPersonnel)}</div>
+                        </div>
+                      </div>
+
+                      {/* Personnel List */}
+                      {workOrder.personnelIds && workOrder.personnelIds.length > 0 && (
+                        <div className="pt-3 border-t">
+                          <div className="text-sm font-medium mb-2 flex items-center gap-2">
+                            <Users className="h-4 w-4" />
+                            Çalışan Personel ({workOrder.personnelIds.length})
+                          </div>
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-2">
+                            {workOrder.personnelIds.map((personnelId) => (
+                              <div key={personnelId} className="flex items-center justify-between p-2 bg-white border rounded">
+                                <span className="text-sm">{getPersonnelName(personnelId)}</span>
+                                <div className="flex items-center gap-2">
+                                  <DollarSign className="h-3 w-3 text-gray-400" />
+                                  <span className="text-sm font-medium text-blue-600">
+                                    {formatCurrency(workOrder.personnelPayments?.[personnelId] || 0)}
+                                  </span>
+                                </div>
+                              </div>
+                            ))}
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Duplicate Work Order Dialog */}
+        {duplicatingWorkOrder && duplicateFormData && (
+          <Dialog open={!!duplicatingWorkOrder} onOpenChange={(open) => {
+            if (!open) {
+              setDuplicatingWorkOrder(null)
+              setDuplicateFormData(null)
+            }
+          }}>
+            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+              <DialogHeader>
+                <DialogTitle>İş Emrini Tekrarla</DialogTitle>
+              </DialogHeader>
+              <form onSubmit={handleSubmitDuplicate} className="space-y-4">
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Tarih *</Label>
+                    <Input
+                      type="date"
+                      value={duplicateFormData.date}
+                      onChange={(e) => setDuplicateFormData({ ...duplicateFormData, date: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Saat *</Label>
+                    <Input
+                      type="time"
+                      value={duplicateFormData.time}
+                      onChange={(e) => setDuplicateFormData({ ...duplicateFormData, time: e.target.value })}
+                      required
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Açıklama</Label>
+                  <Textarea
+                    value={duplicateFormData.description}
+                    onChange={(e) => setDuplicateFormData({ ...duplicateFormData, description: e.target.value })}
+                    rows={3}
+                  />
+                </div>
+
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="space-y-2">
+                    <Label>Toplam Tutar *</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={duplicateFormData.totalAmount}
+                      onChange={(e) => setDuplicateFormData({ ...duplicateFormData, totalAmount: e.target.value })}
+                      required
+                    />
+                  </div>
+                  <div className="space-y-2">
+                    <Label>Ödenen Tutar</Label>
+                    <Input
+                      type="number"
+                      step="0.01"
+                      value={duplicateFormData.paidAmount}
+                      onChange={(e) => setDuplicateFormData({ ...duplicateFormData, paidAmount: e.target.value })}
+                    />
+                  </div>
+                </div>
+
+                <div className="space-y-2">
+                  <Label>Personel Seçimi</Label>
+                  <div className="space-y-2 max-h-60 overflow-y-auto border rounded p-3">
+                    {allPersonnel.map((person) => {
+                      const isSelected = duplicateFormData.personnelIds.includes(person.id)
+                      return (
+                        <div key={person.id} className="flex items-center justify-between p-2 hover:bg-gray-50 rounded">
+                          <div className="flex items-center gap-2">
+                            <input
+                              type="checkbox"
+                              checked={isSelected}
+                              onChange={(e) => {
+                                if (e.target.checked) {
+                                  setDuplicateFormData({
+                                    ...duplicateFormData,
+                                    personnelIds: [...duplicateFormData.personnelIds, person.id]
+                                  })
+                                } else {
+                                  setDuplicateFormData({
+                                    ...duplicateFormData,
+                                    personnelIds: duplicateFormData.personnelIds.filter((id: string) => id !== person.id)
+                                  })
+                                }
+                              }}
+                            />
+                            <label>{person.name}</label>
+                          </div>
+                          {isSelected && (
+                            <Input
+                              type="number"
+                              step="0.01"
+                              placeholder="Ödeme tutarı"
+                              className="w-32"
+                              value={duplicateFormData.personnelPayments[person.id] || ''}
+                              onChange={(e) => setDuplicateFormData({
+                                ...duplicateFormData,
+                                personnelPayments: {
+                                  ...duplicateFormData.personnelPayments,
+                                  [person.id]: parseFloat(e.target.value) || 0
+                                }
+                              })}
+                            />
+                          )}
+                        </div>
+                      )
+                    })}
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2 pt-4">
+                  <Button 
+                    type="button" 
+                    variant="outline" 
+                    onClick={() => {
+                      setDuplicatingWorkOrder(null)
+                      setDuplicateFormData(null)
+                    }}
+                  >
+                    İptal
+                  </Button>
+                  <Button type="submit">
+                    <Copy className="h-4 w-4 mr-2" />
+                    İş Emri Oluştur
+                  </Button>
+                </div>
+              </form>
+            </DialogContent>
+          </Dialog>
+        )}
+      </div>
+    )
+  }
+
+  // Main Customer List View
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -349,26 +797,36 @@ export function Customers({ user }: { user: any }) {
                         {formatCurrency(customer.balance)}
                       </div>
                     </div>
-                    {canEdit && (
-                      <div className="flex gap-2">
-                        <Button
-                          variant="outline"
-                          size="sm"
-                          onClick={() => handleEdit(customer)}
-                        >
-                          <Edit className="h-4 w-4" />
-                        </Button>
-                        {role === 'admin' && (
+                    <div className="flex gap-2">
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        onClick={() => loadCustomerDetails(customer)}
+                      >
+                        <Eye className="h-4 w-4 mr-1" />
+                        Detay
+                      </Button>
+                      {canEdit && (
+                        <>
                           <Button
                             variant="outline"
                             size="sm"
-                            onClick={() => handleDelete(customer.id)}
+                            onClick={() => handleEdit(customer)}
                           >
-                            <Trash2 className="h-4 w-4" />
+                            <Edit className="h-4 w-4" />
                           </Button>
-                        )}
-                      </div>
-                    )}
+                          {role === 'admin' && (
+                            <Button
+                              variant="outline"
+                              size="sm"
+                              onClick={() => handleDelete(customer.id)}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          )}
+                        </>
+                      )}
+                    </div>
                   </div>
                 </div>
               </CardHeader>

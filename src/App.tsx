@@ -14,6 +14,7 @@ import { MonthlySearch } from './components/MonthlySearch'
 import { Finance } from './components/Finance'
 import { UserManagement } from './components/UserManagement'
 import { Analytics } from './components/Analytics'
+import { PendingCollections } from './components/PendingCollections'
 import { Button } from './components/ui/button'
 import { 
   LayoutDashboard, 
@@ -31,10 +32,11 @@ import {
   Wallet,
   DollarSign,
   SearchCheck,
-  BarChart3
+  BarChart3,
+  AlertCircle
 } from 'lucide-react'
 
-type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'users'
+type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'pending-collections' | 'users'
 
 export default function App() {
   const [user, setUser] = useState<any>(null)
@@ -124,7 +126,8 @@ export default function App() {
     { id: 'mobile-daily' as Page, label: 'Günlük İş Programı', icon: Smartphone, roles: ['admin', 'secretary', 'driver', 'cleaner'] },
     { id: 'personnel-payroll' as Page, label: 'Personel Bordroları', icon: Wallet, roles: ['admin', 'secretary'] },
     { id: 'daily-cash-flow' as Page, label: 'Günlük Nakit Akışı', icon: DollarSign, roles: ['admin', 'secretary'] },
-    { id: 'monthly-search' as Page, label: 'Aylık Arama', icon: SearchCheck, roles: ['admin', 'secretary'] },
+    { id: 'pending-collections' as Page, label: 'Bekleyen Tahsilatlar', icon: AlertCircle, roles: ['admin', 'secretary'] },
+    { id: 'monthly-search' as Page, label: 'Geçmiş Arama', icon: SearchCheck, roles: ['admin', 'secretary'] },
     { id: 'personnel-schedule' as Page, label: 'Personel Takvimi', icon: CalendarDays, roles: ['admin', 'secretary', 'driver'] },
     { id: 'finance' as Page, label: 'Gelir-Gider', icon: TrendingUp, roles: ['admin', 'secretary'] },
     { id: 'users' as Page, label: 'Kullanıcılar', icon: Settings, roles: ['admin'] },
@@ -135,7 +138,7 @@ export default function App() {
   const renderPage = () => {
     switch (currentPage) {
       case 'dashboard':
-        return <Dashboard user={user} />
+        return <Dashboard user={user} onNavigate={setCurrentPage} />
       case 'analytics':
         return <Analytics user={user} />
       case 'customers':
@@ -150,6 +153,8 @@ export default function App() {
         return <PersonnelPayroll user={user} />
       case 'daily-cash-flow':
         return <DailyCashFlow user={user} />
+      case 'pending-collections':
+        return <PendingCollections user={user} />
       case 'monthly-search':
         return <MonthlySearch user={user} />
       case 'personnel-schedule':
@@ -157,9 +162,9 @@ export default function App() {
       case 'finance':
         return <Finance user={user} />
       case 'users':
-        return role === 'admin' ? <UserManagement /> : <Dashboard user={user} />
+        return role === 'admin' ? <UserManagement /> : <Dashboard user={user} onNavigate={setCurrentPage} />
       default:
-        return <Dashboard user={user} />
+        return <Dashboard user={user} onNavigate={setCurrentPage} />
     }
   }
 

@@ -7,8 +7,9 @@ import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Badge } from './ui/badge'
-import { Plus, Calendar, CheckCircle, Clock, Edit, Trash2 } from 'lucide-react'
+import { Plus, Calendar, CheckCircle, Clock, Edit, Trash2, Search, UserPlus, Users, AlertCircle } from 'lucide-react'
 import { Textarea } from './ui/textarea'
+import { toast } from 'sonner@2.0.3'
 
 interface WorkOrder {
   id: string
@@ -32,24 +33,31 @@ export function WorkOrders({ user }: { user: any }) {
   const [selectedDate, setSelectedDate] = useState(new Date().toISOString().split('T')[0])
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null)
-  const [completingOrder, setCompletingOrder] = useState<WorkOrder | null>(null)
-  const [completionPayment, setCompletionPayment] = useState('')
+  const [searchQuery, setSearchQuery] = useState('')
+  const [showNewCustomerForm, setShowNewCustomerForm] = useState(false)
+  const [newCustomerData, setNewCustomerData] = useState({
+    name: '',
+    phone: '',
+    address: '',
+    type: 'normal' as 'regular' | 'problematic' | 'normal'
+  })
 
   const [formData, setFormData] = useState({
     customerId: '',
     personnelIds: [] as string[],
-    date: '', // Don't pre-fill with today - force user to select a date
+    personnelCount: '1',
+    date: '',
     description: '',
     totalAmount: '',
     paidAmount: '',
     autoApprove: false,
     isRecurring: false,
     recurrenceType: 'weekly' as 'weekly' | 'biweekly' | 'monthly-date' | 'monthly-weekday',
-    recurrenceDay: 3, // Wednesday
+    recurrenceDay: 3,
     recurrenceDate: 1,
     recurrenceWeek: 1,
-    recurrenceWeekday: 0, // Sunday
-    endDate: new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0] // End of current year
+    recurrenceWeekday: 0,
+    endDate: new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0]
   })
 
   const userRole = user?.user_metadata?.role
@@ -80,14 +88,13 @@ export function WorkOrders({ user }: { user: any }) {
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault()
 
-    // Validate required fields
     if (!formData.customerId) {
-      alert('Lütfen müşteri seçin')
+      toast.error('Lütfen müşteri seçin')
       return
     }
 
     if (!formData.date) {
-      alert('Lütfen tarih seçin')
+      toast.error('Lütfen tarih seçin')
       return
     }
 
@@ -95,23 +102,22 @@ export function WorkOrders({ user }: { user: any }) {
     const paidAmount = parseFloat(formData.paidAmount)
     
     if (isNaN(totalAmount) || totalAmount < 0) {
-      alert('Lütfen geçerli bir toplam tutar girin (0 veya pozitif değer)')
+      toast.error('Lütfen geçerli bir toplam tutar girin')
       return
     }
 
     if (isNaN(paidAmount) || paidAmount < 0) {
-      alert('Lütfen geçerli bir ödenen tutar girin (0 veya pozitif değer)')
+      toast.error('Lütfen geçerli bir ödenen tutar girin')
       return
     }
 
     if (paidAmount > totalAmount) {
-      alert('Ödenen tutar toplam tutardan fazla olamaz')
+      toast.error('Ödenen tutar toplam tutardan fazla olamaz')
       return
     }
 
     try {
       if (formData.isRecurring && !editingOrder) {
-        // Create recurring work orders
         const payload = {
           customerId: formData.customerId,
           personnelIds: formData.personnelIds,
@@ -133,9 +139,8 @@ export function WorkOrders({ user }: { user: any }) {
           body: JSON.stringify(payload)
         })
 
-        alert(`${result.count} adet tekrarlayan iş emri oluşturuldu`)
+        toast.success(`${result.count} adet tekrarlayan iş emri oluşturuldu`)
       } else {
-        // Create single work order or update existing
         const payload = {
           customerId: formData.customerId,
           personnelIds: formData.personnelIds,
@@ -151,11 +156,13 @@ export function WorkOrders({ user }: { user: any }) {
             method: 'PUT',
             body: JSON.stringify(payload)
           })
+          toast.success('İş emri güncellendi')
         } else {
           await apiCall('/work-orders', {
             method: 'POST',
             body: JSON.stringify(payload)
           })
+          toast.success('İş emri oluşturuldu')
         }
       }
 
@@ -164,81 +171,18 @@ export function WorkOrders({ user }: { user: any }) {
       loadData()
     } catch (error) {
       console.error('Error saving work order:', error)
-      alert('İş emri kaydedilirken hata oluştu')
+      toast.error('İş emri kaydedilirken hata oluştu')
     }
   }
 
-  const handleApprove = async (orderId: string) => {
-    try {
-      await apiCall(`/work-orders/${orderId}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          status: 'approved',
-          approvedAt: new Date().toISOString()
-        })
-      })
-      loadData()
-    } catch (error) {
-      console.error('Error approving work order:', error)
-      alert('İş emri onaylanırken hata oluştu')
-    }
-  }
 
-  const handleCompleteClick = (order: WorkOrder) => {
-    setCompletingOrder(order)
-    // Pre-fill with remaining amount
-    const remainingAmount = (order.totalAmount || 0) - (order.paidAmount || 0)
-    setCompletionPayment(remainingAmount > 0 ? remainingAmount.toString() : '0')
-  }
-
-  const handleCompleteSubmit = async () => {
-    if (!completingOrder) return
-
-    const paymentAmount = parseFloat(completionPayment)
-    
-    if (isNaN(paymentAmount) || paymentAmount < 0) {
-      alert('Lütfen geçerli bir tutar girin (0 veya pozitif değer)')
-      return
-    }
-
-    const newPaidAmount = (completingOrder.paidAmount || 0) + paymentAmount
-    
-    if (newPaidAmount > (completingOrder.totalAmount || 0)) {
-      alert('Toplam ödenen tutar, iş emrinin toplam tutarından fazla olamaz')
-      return
-    }
-
-    try {
-      await apiCall(`/work-orders/${completingOrder.id}`, {
-        method: 'PUT',
-        body: JSON.stringify({
-          status: 'completed',
-          completedAt: new Date().toISOString(),
-          paidAmount: newPaidAmount
-        })
-      })
-      
-      // Show success message
-      if (paymentAmount > 0) {
-        alert(`İş emri tamamlandı! ${paymentAmount.toFixed(2)} TL tahsilat günlük nakit akışına otomatik olarak kaydedildi.`)
-      } else {
-        alert('İş emri tamamlandı!')
-      }
-      
-      setCompletingOrder(null)
-      setCompletionPayment('')
-      loadData()
-    } catch (error) {
-      console.error('Error completing work order:', error)
-      alert('İş emri tamamlanırken hata oluştu')
-    }
-  }
 
   const handleEdit = (order: WorkOrder) => {
     setEditingOrder(order)
     setFormData({
       customerId: order.customerId,
       personnelIds: order.personnelIds || [],
+      personnelCount: (order.personnelIds?.length || 1).toString(),
       date: order.date?.split('T')[0] || '',
       description: order.description || '',
       totalAmount: order.totalAmount?.toString() || '0',
@@ -265,9 +209,10 @@ export function WorkOrders({ user }: { user: any }) {
         method: 'DELETE'
       })
       loadData()
+      toast.success('İş emri silindi')
     } catch (error: any) {
       console.error('Error deleting work order:', error)
-      alert(error.message || 'İş emri silinirken hata oluştu')
+      toast.error(error.message || 'İş emri silinirken hata oluştu')
     }
   }
 
@@ -275,7 +220,8 @@ export function WorkOrders({ user }: { user: any }) {
     setFormData({
       customerId: '',
       personnelIds: [],
-      date: '', // Don't pre-fill with today - force user to select a date
+      personnelCount: '1',
+      date: '',
       description: '',
       totalAmount: '',
       paidAmount: '',
@@ -289,7 +235,62 @@ export function WorkOrders({ user }: { user: any }) {
       endDate: new Date(new Date().getFullYear(), 11, 31).toISOString().split('T')[0]
     })
     setEditingOrder(null)
+    setSearchQuery('')
+    setShowNewCustomerForm(false)
+    setNewCustomerData({
+      name: '',
+      phone: '',
+      address: '',
+      type: 'normal'
+    })
   }
+
+  const handleCreateNewCustomer = async () => {
+    if (!newCustomerData.name || !newCustomerData.phone) {
+      toast.error('Müşteri adı ve telefon numarası gereklidir')
+      return
+    }
+
+    try {
+      const payload = {
+        name: newCustomerData.name,
+        contactInfo: {
+          phone: newCustomerData.phone,
+          address: newCustomerData.address || ''
+        },
+        type: newCustomerData.type
+      }
+
+      const result = await apiCall('/customers', {
+        method: 'POST',
+        body: JSON.stringify(payload)
+      })
+
+      toast.success('Yeni müşteri oluşturuldu!')
+      
+      const customersResult = await apiCall('/customers')
+      setCustomers(customersResult.customers || [])
+      
+      setFormData({ ...formData, customerId: result.customer.id })
+      setShowNewCustomerForm(false)
+      setNewCustomerData({
+        name: '',
+        phone: '',
+        address: '',
+        type: 'normal'
+      })
+    } catch (error) {
+      console.error('Error creating customer:', error)
+      toast.error('Müşteri oluşturulurken hata oluştu')
+    }
+  }
+
+  const filteredCustomers = customers.filter(customer => {
+    const query = searchQuery.toLowerCase()
+    const nameMatch = customer.name?.toLowerCase().includes(query)
+    const phoneMatch = customer.contactInfo?.phone?.includes(query)
+    return nameMatch || phoneMatch
+  })
 
   const getCustomerName = (customerId: string) => {
     const customer = customers.find(c => c.id === customerId)
@@ -303,24 +304,18 @@ export function WorkOrders({ user }: { user: any }) {
       .join(', ') || 'Atanmadı'
   }
 
-  // Check if personnel is assigned to another work order on the same date
-  const isPersonnelAssignedOnDate = (personnelId: string, date: string): { assigned: boolean, customerName: string } => {
+  const getPersonnelAssignmentsOnDate = (personnelId: string, date: string): string[] => {
+    if (!date) return []
     const dateOnly = date.split('T')[0]
-    const assignedOrder = workOrders.find(wo => {
+    const assignedOrders = workOrders.filter(wo => {
       const woDateOnly = wo.date?.split('T')[0]
-      // Skip if it's the order being edited
       if (editingOrder && wo.id === editingOrder.id) return false
-      // Check if date matches and personnel is assigned and order is not cancelled
       return woDateOnly === dateOnly && 
              wo.personnelIds?.includes(personnelId) &&
              (wo.status === 'draft' || wo.status === 'approved' || wo.status === 'completed')
     })
     
-    if (assignedOrder) {
-      const customerName = getCustomerName(assignedOrder.customerId)
-      return { assigned: true, customerName }
-    }
-    return { assigned: false, customerName: '' }
+    return assignedOrders.map(order => getCustomerName(order.customerId))
   }
 
   const getStatusBadge = (status: string) => {
@@ -377,25 +372,107 @@ export function WorkOrders({ user }: { user: any }) {
                 </DialogTitle>
               </DialogHeader>
               <form onSubmit={handleSubmit} className="space-y-4">
+                {/* Müşteri Seçimi veya Yeni Müşteri */}
+                <div className="space-y-2">
+                  <Label>Müşteri *</Label>
+                  {!showNewCustomerForm ? (
+                    <div className="space-y-2">
+                      <div className="relative">
+                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                        <Input
+                          placeholder="Müşteri adı veya telefon numarası ile ara..."
+                          value={searchQuery}
+                          onChange={(e) => setSearchQuery(e.target.value)}
+                          className="pl-10"
+                        />
+                      </div>
+                      <Select 
+                        value={formData.customerId}
+                        onValueChange={(value) => setFormData({ ...formData, customerId: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue placeholder="Müşteri seçin" />
+                        </SelectTrigger>
+                        <SelectContent>
+                          {filteredCustomers.length > 0 ? (
+                            filteredCustomers.map(customer => (
+                              <SelectItem key={customer.id} value={customer.id}>
+                                {customer.name} {customer.contactInfo?.phone && `(${customer.contactInfo.phone})`}
+                              </SelectItem>
+                            ))
+                          ) : (
+                            <SelectItem value="no-results" disabled>
+                              Sonuç bulunamadı
+                            </SelectItem>
+                          )}
+                        </SelectContent>
+                      </Select>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        onClick={() => setShowNewCustomerForm(true)}
+                        className="w-full"
+                      >
+                        <UserPlus className="h-4 w-4 mr-2" />
+                        Yeni Müşteri Oluştur
+                      </Button>
+                    </div>
+                  ) : (
+                    <Card className="p-4 space-y-3 bg-blue-50 border-blue-200">
+                      <div className="flex items-center justify-between">
+                        <h3 className="font-medium">Yeni Müşteri</h3>
+                        <Button
+                          type="button"
+                          variant="ghost"
+                          size="sm"
+                          onClick={() => setShowNewCustomerForm(false)}
+                        >
+                          İptal
+                        </Button>
+                      </div>
+                      <div className="space-y-2">
+                        <Input
+                          placeholder="Müşteri Adı *"
+                          value={newCustomerData.name}
+                          onChange={(e) => setNewCustomerData({ ...newCustomerData, name: e.target.value })}
+                        />
+                        <Input
+                          placeholder="Telefon *"
+                          value={newCustomerData.phone}
+                          onChange={(e) => setNewCustomerData({ ...newCustomerData, phone: e.target.value })}
+                        />
+                        <Input
+                          placeholder="Adres (Opsiyonel)"
+                          value={newCustomerData.address}
+                          onChange={(e) => setNewCustomerData({ ...newCustomerData, address: e.target.value })}
+                        />
+                        <Select
+                          value={newCustomerData.type}
+                          onValueChange={(value: any) => setNewCustomerData({ ...newCustomerData, type: value })}
+                        >
+                          <SelectTrigger>
+                            <SelectValue />
+                          </SelectTrigger>
+                          <SelectContent>
+                            <SelectItem value="normal">Normal</SelectItem>
+                            <SelectItem value="regular">Düzenli</SelectItem>
+                            <SelectItem value="problematic">Sıkıntılı</SelectItem>
+                          </SelectContent>
+                        </Select>
+                      </div>
+                      <Button
+                        type="button"
+                        onClick={handleCreateNewCustomer}
+                        className="w-full"
+                      >
+                        Müşteri Oluştur ve Seç
+                      </Button>
+                    </Card>
+                  )}
+                </div>
+
+                {/* Tarih ve Eleman Sayısı */}
                 <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="customer">Müşteri *</Label>
-                    <Select 
-                      value={formData.customerId}
-                      onValueChange={(value) => setFormData({ ...formData, customerId: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue placeholder="Müşteri seçin" />
-                      </SelectTrigger>
-                      <SelectContent>
-                        {customers.map(customer => (
-                          <SelectItem key={customer.id} value={customer.id}>
-                            {customer.name}
-                          </SelectItem>
-                        ))}
-                      </SelectContent>
-                    </Select>
-                  </div>
                   <div className="space-y-2">
                     <Label htmlFor="date">{formData.isRecurring ? 'Başlangıç Tarihi *' : 'Tarih *'}</Label>
                     <Input
@@ -406,23 +483,37 @@ export function WorkOrders({ user }: { user: any }) {
                       required
                     />
                   </div>
+                  <div className="space-y-2">
+                    <Label htmlFor="personnelCount">
+                      <Users className="h-4 w-4 inline mr-1" />
+                      Eleman Sayısı
+                    </Label>
+                    <Input
+                      id="personnelCount"
+                      type="number"
+                      min="1"
+                      value={formData.personnelCount}
+                      onChange={(e) => setFormData({ ...formData, personnelCount: e.target.value })}
+                    />
+                  </div>
                 </div>
+
+                {/* Personel Seçimi */}
                 <div className="space-y-2">
-                  <Label>Personel Ata</Label>
-                  <div className="border rounded-md p-3 space-y-2 max-h-48 overflow-y-auto">
-                    {personnel.map(person => {
-                      const assignmentCheck = isPersonnelAssignedOnDate(person.id, formData.date)
-                      const isAssigned = assignmentCheck.assigned
+                  <Label>Personel Ata (Temizlikçiler)</Label>
+                  <div className="border rounded-md p-3 space-y-2 max-h-64 overflow-y-auto">
+                    {personnel.filter(p => p.role === 'cleaner').map(person => {
+                      const otherAssignments = getPersonnelAssignmentsOnDate(person.id, formData.date)
+                      const hasOtherJobs = otherAssignments.length > 0
                       
                       return (
                         <label 
                           key={person.id} 
-                          className={`flex items-center gap-2 ${isAssigned ? 'opacity-50 cursor-not-allowed' : 'cursor-pointer'}`}
+                          className="flex items-start gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
                         >
                           <input
                             type="checkbox"
                             checked={formData.personnelIds.includes(person.id)}
-                            disabled={isAssigned}
                             onChange={(e) => {
                               if (e.target.checked) {
                                 setFormData({
@@ -436,21 +527,25 @@ export function WorkOrders({ user }: { user: any }) {
                                 })
                               }
                             }}
-                            className="rounded"
+                            className="rounded mt-1"
                           />
-                          <span className="flex-1">
-                            {person.name} - {person.role}
-                            {isAssigned && (
-                              <span className="ml-2 text-xs text-red-600">
-                                ({assignmentCheck.customerName} için atanmış)
-                              </span>
+                          <div className="flex-1">
+                            <div>{person.name}</div>
+                            {hasOtherJobs && (
+                              <div className="flex items-start gap-1 mt-1 text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                                <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                                <span>
+                                  Bugün şu müşterilerde de çalışıyor: {otherAssignments.join(', ')}
+                                </span>
+                              </div>
                             )}
-                          </span>
+                          </div>
                         </label>
                       )
                     })}
                   </div>
                 </div>
+
                 <div className="space-y-2">
                   <Label htmlFor="description">Açıklama</Label>
                   <Textarea
@@ -460,6 +555,7 @@ export function WorkOrders({ user }: { user: any }) {
                     rows={3}
                   />
                 </div>
+
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <Label htmlFor="totalAmount">Toplam Tutar (TL)</Label>
@@ -486,6 +582,7 @@ export function WorkOrders({ user }: { user: any }) {
                     />
                   </div>
                 </div>
+
                 <div className="flex items-center gap-2">
                   <input
                     type="checkbox"
@@ -498,6 +595,7 @@ export function WorkOrders({ user }: { user: any }) {
                     Otomatik onayla (Taslak olarak kaydetme)
                   </Label>
                 </div>
+
                 {!editingOrder && (
                   <>
                     <div className="border-t pt-4">
@@ -513,6 +611,7 @@ export function WorkOrders({ user }: { user: any }) {
                           🔁 Tekrarlayan İş Emri (Düzenli müşteri için otomatik iş emirleri oluştur)
                         </Label>
                       </div>
+
                       {formData.isRecurring && (
                         <div className="space-y-4 bg-blue-50 p-4 rounded-md">
                           <div className="space-y-2">
@@ -629,11 +728,17 @@ export function WorkOrders({ user }: { user: any }) {
                     </div>
                   </>
                 )}
+
                 <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                  <Button type="button" variant="outline" onClick={() => {
+                    setIsDialogOpen(false)
+                    resetForm()
+                  }}>
                     İptal
                   </Button>
-                  <Button type="submit">{formData.isRecurring && !editingOrder ? 'Tekrarlayan İş Emirleri Oluştur' : 'Kaydet'}</Button>
+                  <Button type="submit">
+                    {editingOrder ? 'Güncelle' : formData.isRecurring ? 'Tekrarlayan İş Emirleri Oluştur' : 'Oluştur'}
+                  </Button>
                 </div>
               </form>
             </DialogContent>
@@ -641,214 +746,84 @@ export function WorkOrders({ user }: { user: any }) {
         )}
       </div>
 
-      {/* Date Filter */}
-      <Card>
-        <CardContent className="pt-6">
-          <div className="flex items-center gap-4">
-            <Calendar className="h-5 w-5 text-gray-500" />
-            <Input
-              type="date"
-              value={selectedDate}
-              onChange={(e) => setSelectedDate(e.target.value)}
-              className="w-auto"
-            />
-            <Button
-              variant="outline"
-              onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
-            >
-              Bugün
-            </Button>
-          </div>
-        </CardContent>
-      </Card>
+      <div className="flex gap-4">
+        <div className="flex-1">
+          <Label htmlFor="date">Tarih</Label>
+          <Input
+            id="date"
+            type="date"
+            value={selectedDate}
+            onChange={(e) => setSelectedDate(e.target.value)}
+          />
+        </div>
+      </div>
 
-      {/* Work Orders by Date */}
-      <div className="space-y-6">
+      {/* Work Orders List */}
+      <div className="space-y-4">
         {Object.keys(groupedByDate).length === 0 ? (
           <Card>
-            <CardContent className="py-12 text-center text-gray-500">
-              Seçilen tarih için iş emri bulunamadı
+            <CardContent className="p-6 text-center text-gray-500">
+              Seçili tarih için iş emri bulunamadı
             </CardContent>
           </Card>
         ) : (
-          Object.entries(groupedByDate)
-            .sort(([a], [b]) => b.localeCompare(a))
-            .map(([date, orders]) => (
-              <div key={date}>
-                <h3 className="mb-4">
-                  {new Date(date).toLocaleDateString('tr-TR', {
-                    weekday: 'long',
-                    year: 'numeric',
-                    month: 'long',
-                    day: 'numeric'
-                  })}
-                </h3>
-                <div className="grid gap-4">
-                  {orders.map(order => (
-                    <Card key={order.id}>
-                      <CardHeader>
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <CardTitle className="flex items-center gap-2">
-                              {getCustomerName(order.customerId)}
-                              {getStatusBadge(order.status)}
-                            </CardTitle>
-                            <p className="text-sm text-gray-500 mt-1">
-                              Oluşturan: {order.createdByName || 'Bilinmiyor'}
+          Object.entries(groupedByDate).map(([date, orders]) => (
+            <Card key={date}>
+              <CardHeader>
+                <CardTitle className="text-lg flex items-center gap-2">
+                  <Calendar className="h-5 w-5" />
+                  {new Date(date).toLocaleDateString('tr-TR', { weekday: 'long', year: 'numeric', month: 'long', day: 'numeric' })}
+                  <span className="text-sm text-gray-500">({orders.length} iş emri)</span>
+                </CardTitle>
+              </CardHeader>
+              <CardContent className="space-y-3">
+                {orders.map(order => (
+                  <div key={order.id} className="border rounded-lg p-4 hover:bg-gray-50">
+                    <div className="flex items-start justify-between">
+                      <div className="flex-1">
+                        <div className="flex items-center gap-2 mb-2">
+                          <h3 className="font-medium">{getCustomerName(order.customerId)}</h3>
+                          {getStatusBadge(order.status)}
+                        </div>
+                        <div className="text-sm text-gray-600 space-y-1">
+                          <p><strong>Personel:</strong> {getPersonnelNames(order.personnelIds)}</p>
+                          {order.description && <p><strong>Açıklama:</strong> {order.description}</p>}
+                          <p><strong>Tutar:</strong> {order.totalAmount?.toFixed(2)} TL</p>
+                          <p><strong>Ödenen:</strong> {order.paidAmount?.toFixed(2)} TL</p>
+                          {order.paidAmount < order.totalAmount && (
+                            <p className="text-red-600">
+                              <strong>Kalan:</strong> {(order.totalAmount - order.paidAmount).toFixed(2)} TL
                             </p>
-                          </div>
+                          )}
+                          <p className="text-xs text-gray-500">Oluşturan: {order.createdByName}</p>
                         </div>
-                      </CardHeader>
-                      <CardContent className="space-y-3">
-                        <div className="space-y-2 text-sm">
-                          <div>
-                            <span className="text-gray-500">Personel: </span>
-                            {getPersonnelNames(order.personnelIds || [])}
-                          </div>
-                          <div className="grid grid-cols-3 gap-2">
-                            <div>
-                              <span className="text-gray-500">Toplam: </span>
-                              <span>{order.totalAmount ? `${order.totalAmount.toFixed(2)} TL` : '-'}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-500">Ödenen: </span>
-                              <span>{order.paidAmount ? `${order.paidAmount.toFixed(2)} TL` : '-'}</span>
-                            </div>
-                            <div>
-                              <span className="text-gray-500">Kalan: </span>
-                              <span className={(order.totalAmount - order.paidAmount) > 0 ? 'text-red-600' : 'text-green-600'}>
-                                {order.totalAmount !== undefined && order.paidAmount !== undefined ? `${(order.totalAmount - order.paidAmount).toFixed(2)} TL` : '-'}
-                              </span>
-                            </div>
-                          </div>
+                      </div>
+                      {canEdit && (
+                        <div className="flex gap-2">
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleEdit(order)}
+                          >
+                            <Edit className="h-4 w-4" />
+                          </Button>
+                          <Button
+                            size="sm"
+                            variant="outline"
+                            onClick={() => handleDelete(order.id)}
+                          >
+                            <Trash2 className="h-4 w-4 text-red-600" />
+                          </Button>
                         </div>
-                        {order.description && (
-                          <p className="text-sm text-gray-600">{order.description}</p>
-                        )}
-                        {canEdit && (
-                          <div className="flex gap-2 pt-2 border-t">
-                            {order.status === 'draft' && (
-                              <>
-                                <Button
-                                  size="sm"
-                                  variant="outline"
-                                  onClick={() => handleEdit(order)}
-                                >
-                                  <Edit className="h-4 w-4 mr-1" />
-                                  Düzenle
-                                </Button>
-                                <Button
-                                  size="sm"
-                                  onClick={() => handleApprove(order.id)}
-                                >
-                                  <CheckCircle className="h-4 w-4 mr-1" />
-                                  Onayla
-                                </Button>
-                              </>
-                            )}
-                            {order.status === 'approved' && (
-                              <Button
-                                size="sm"
-                                variant="outline"
-                                onClick={() => handleCompleteClick(order)}
-                              >
-                                Tamamla
-                              </Button>
-                            )}
-                            {userRole === 'admin' && (order.status === 'approved' || order.status === 'completed') && (
-                              <Button
-                                size="sm"
-                                variant="destructive"
-                                onClick={() => handleDelete(order.id)}
-                              >
-                                <Trash2 className="h-4 w-4 mr-1" />
-                                Sil
-                              </Button>
-                            )}
-                          </div>
-                        )}
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              </div>
-            ))
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </CardContent>
+            </Card>
+          ))
         )}
       </div>
-
-      {/* Completion Payment Dialog */}
-      <Dialog open={!!completingOrder} onOpenChange={(open) => {
-        if (!open) {
-          setCompletingOrder(null)
-          setCompletionPayment('')
-        }
-      }}>
-        <DialogContent>
-          <DialogHeader>
-            <DialogTitle>İş Emrini Tamamla</DialogTitle>
-          </DialogHeader>
-          {completingOrder && (
-            <div className="space-y-4">
-              <div className="space-y-2 p-4 bg-gray-50 rounded-md">
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Müşteri:</span>
-                  <span className="text-sm font-medium">{getCustomerName(completingOrder.customerId)}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Toplam Tutar:</span>
-                  <span className="text-sm font-medium">{(completingOrder.totalAmount || 0).toFixed(2)} TL</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-sm text-gray-600">Önceden Ödenen:</span>
-                  <span className="text-sm font-medium">{(completingOrder.paidAmount || 0).toFixed(2)} TL</span>
-                </div>
-                <div className="flex justify-between border-t pt-2">
-                  <span className="text-sm text-gray-600">Kalan Tutar:</span>
-                  <span className="text-sm font-medium text-red-600">
-                    {((completingOrder.totalAmount || 0) - (completingOrder.paidAmount || 0)).toFixed(2)} TL
-                  </span>
-                </div>
-              </div>
-              <div className="space-y-2">
-                <Label htmlFor="completionPayment">Müşteriden Alınan Tutar (TL)</Label>
-                <Input
-                  id="completionPayment"
-                  type="number"
-                  step="0.01"
-                  min="0"
-                  value={completionPayment}
-                  onChange={(e) => setCompletionPayment(e.target.value)}
-                  placeholder="0.00"
-                  autoFocus
-                />
-                <p className="text-xs text-gray-500">
-                  Bu işte müşteriden ne kadar tahsilat yaptınız?
-                </p>
-                {parseFloat(completionPayment) > 0 && (
-                  <div className="bg-blue-50 border border-blue-200 rounded-md p-3 text-xs text-blue-800">
-                    💡 <strong>Bilgi:</strong> Girdiğiniz {parseFloat(completionPayment).toFixed(2)} TL tahsilat, bugünün tarihinde günlük nakit akışına ve Finance bölümüne otomatik olarak kaydedilecektir.
-                  </div>
-                )}
-              </div>
-              <div className="flex justify-end gap-2">
-                <Button
-                  type="button"
-                  variant="outline"
-                  onClick={() => {
-                    setCompletingOrder(null)
-                    setCompletionPayment('')
-                  }}
-                >
-                  İptal
-                </Button>
-                <Button onClick={handleCompleteSubmit}>
-                  İş Emrini Tamamla
-                </Button>
-              </div>
-            </div>
-          )}
-        </DialogContent>
-      </Dialog>
     </div>
   )
 }

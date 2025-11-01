@@ -1662,18 +1662,31 @@ app.get('/make-server-882c4243/payroll', async (c) => {
     // Get all payroll records for the date
     const allRecords = await kv.getByPrefix(`payroll:${date}:`)
     
-    // Calculate previous date to get carryover balances
-    const currentDate = new Date(date)
-    currentDate.setDate(currentDate.getDate() - 1)
-    const previousDate = currentDate.toISOString().split('T')[0]
+    // Calculate cumulative balance up to the day before selected date
+    // This finds the most recent balance for each personnel before the selected date
+    const allPayrollRecords = await kv.getByPrefix('payroll:')
     
-    // Get previous day's records for carryover
-    const previousRecords = await kv.getByPrefix(`payroll:${previousDate}:`)
-    
-    // Create a map of previous balances
     const previousBalances: Record<string, number> = {}
-    previousRecords.forEach((record: any) => {
-      previousBalances[record.personnelId] = record.balance || 0
+    
+    // Group records by personnel
+    const personnelRecords: Record<string, any[]> = {}
+    allPayrollRecords.forEach((record: any) => {
+      if (record.personnelId && record.date && record.date < date) {
+        if (!personnelRecords[record.personnelId]) {
+          personnelRecords[record.personnelId] = []
+        }
+        personnelRecords[record.personnelId].push(record)
+      }
+    })
+    
+    // For each personnel, find the most recent balance before the selected date
+    Object.keys(personnelRecords).forEach(personnelId => {
+      const records = personnelRecords[personnelId]
+      // Sort by date descending to get the most recent
+      records.sort((a, b) => b.date.localeCompare(a.date))
+      // Get the most recent balance
+      const mostRecentRecord = records[0]
+      previousBalances[personnelId] = mostRecentRecord.balance || 0
     })
     
     return c.json({ 
@@ -1700,7 +1713,7 @@ app.post('/make-server-882c4243/payroll', async (c) => {
     }
 
     const body = await c.req.json()
-    const { personnelId, date, carryover, dailyWage, dailyPayment } = body
+    const { personnelId, date, dailyWage, dailyPayment } = body
 
     console.log('Payroll POST request body:', body)
 
@@ -1712,8 +1725,24 @@ app.post('/make-server-882c4243/payroll', async (c) => {
       }, 400)
     }
 
+    // AUTO-CALCULATE CARRYOVER: Find most recent balance before this date
+    const allPayrollRecords = await kv.getByPrefix('payroll:')
+    const previousRecords = allPayrollRecords.filter((record: any) => 
+      record.personnelId === personnelId && 
+      record.date && 
+      record.date < date
+    )
+    
+    // Sort by date descending to get the most recent
+    previousRecords.sort((a, b) => b.date.localeCompare(a.date))
+    
+    // Get the most recent balance as carryover
+    const autoCarryover = previousRecords.length > 0 ? (previousRecords[0].balance || 0) : 0
+
+    console.log('Auto-calculated carryover for', personnelId, 'on', date, ':', autoCarryover, 'from', previousRecords.length, 'previous records')
+
     const recordId = `payroll:${date}:${personnelId}`
-    const balance = (parseFloat(carryover) || 0) + (parseFloat(dailyWage) || 0) - (parseFloat(dailyPayment) || 0)
+    const balance = autoCarryover + (parseFloat(dailyWage) || 0) - (parseFloat(dailyPayment) || 0)
 
     // Get personnel name to store in the record for searching
     const personnel = await kv.get(personnelId)
@@ -1723,7 +1752,7 @@ app.post('/make-server-882c4243/payroll', async (c) => {
       personnelId,
       personnelName,
       date,
-      carryover: parseFloat(carryover) || 0,
+      carryover: autoCarryover, // AUTO-CALCULATED, not from user input
       dailyWage: parseFloat(dailyWage) || 0,
       dailyPayment: parseFloat(dailyPayment) || 0,
       balance,
@@ -1851,9 +1880,15 @@ app.get('/make-server-882c4243/cash-flow', async (c) => {
     // Combine both collections
     const collections = [...workOrderCollections, ...manualCollections]
 
-    // Calculate summary
+    // Calculate summary - only include CASH expenses in totalExpenses
     const totalCollection = collections.reduce((sum: number, c: any) => sum + (c.amount || 0), 0)
-    const totalExpenses = expenses.reduce((sum: number, e: any) => sum + (e.amount || 0), 0)
+    const totalExpenses = expenses.reduce((sum: number, e: any) => {
+      // Only include expenses paid with cash (or if paymentMethod is not set, assume cash for backwards compatibility)
+      if (!e.paymentMethod || e.paymentMethod === 'cash') {
+        return sum + (e.amount || 0)
+      }
+      return sum
+    }, 0)
     const totalWagesPaid = payrollRecords.reduce((sum: number, p: any) => sum + (p.dailyPayment || 0), 0)
     const totalWageDebt = payrollRecords.reduce((sum: number, p: any) => sum + (p.balance || 0), 0)
     const totalAccruedWages = payrollRecords.reduce((sum: number, p: any) => sum + (p.dailyWage || 0), 0)
@@ -2064,7 +2099,7 @@ app.post('/make-server-882c4243/cash-flow/expense', async (c) => {
     }
 
     const body = await c.req.json()
-    const { description, invoiceDate, invoiceNo, amount, date } = body
+    const { description, invoiceDate, invoiceNo, amount, date, paymentMethod } = body
 
     if (!description || !amount || !date) {
       return c.json({ error: 'Description, amount, and date are required' }, 400)
@@ -2078,6 +2113,7 @@ app.post('/make-server-882c4243/cash-flow/expense', async (c) => {
       invoiceNo: invoiceNo || '',
       amount: parseFloat(amount),
       date,
+      paymentMethod: paymentMethod || 'cash', // Default to cash for backwards compatibility
       createdAt: new Date().toISOString(),
       createdBy: user.id,
       createdByName: user.user_metadata?.name
@@ -2116,7 +2152,7 @@ app.put('/make-server-882c4243/cash-flow/expense', async (c) => {
     }
 
     const body = await c.req.json()
-    const { id, description, invoiceDate, invoiceNo, amount, date } = body
+    const { id, description, invoiceDate, invoiceNo, amount, date, paymentMethod } = body
 
     if (!id || !description || !amount || !date) {
       return c.json({ error: 'ID, description, amount, and date are required' }, 400)
@@ -2134,6 +2170,7 @@ app.put('/make-server-882c4243/cash-flow/expense', async (c) => {
       invoiceNo: invoiceNo || '',
       amount: parseFloat(amount),
       date,
+      paymentMethod: paymentMethod || 'cash', // Default to cash for backwards compatibility
       updatedAt: new Date().toISOString(),
       updatedBy: user.id,
       updatedByName: user.user_metadata?.name
@@ -2190,10 +2227,506 @@ app.delete('/make-server-882c4243/cash-flow/expense/:id', async (c) => {
 })
 
 // ============================
-// MONTHLY SEARCH ROUTES
+// HISTORY SEARCH ROUTES
 // ============================
 
-// Search collections and expenses by keyword for a specific month - GLOBAL SEARCH
+// Search ALL history records by keyword - GLOBAL SEARCH (no date filter)
+app.get('/make-server-882c4243/history-search', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    const keyword = c.req.query('keyword') || ''
+    const startDate = c.req.query('startDate') || ''
+    const endDate = c.req.query('endDate') || ''
+
+    if (!keyword) {
+      return c.json({ error: 'Keyword is required' }, 400)
+    }
+
+    const hasDateFilter = startDate && endDate
+    console.log('History search - keyword:', keyword, hasDateFilter ? `- date range: ${startDate} to ${endDate}` : '- searching ALL records')
+
+    // Get all data sources - NO DATE FILTERING
+    const [allCollections, allExpenses, allPayrolls, allTransactions, allWorkOrders, allPersonnel, allCustomers] = await Promise.all([
+      kv.getByPrefix('cashflow:collection:'),
+      kv.getByPrefix('cashflow:expense:'),
+      kv.getByPrefix('payroll:'),
+      kv.getByPrefix('transaction:'),
+      kv.getByPrefix('workorder:'),
+      kv.getByPrefix('personnel:'),
+      kv.getByPrefix('customer:')
+    ])
+
+    // Create lookup maps
+    const personnelNameMap: Record<string, string> = {}
+    const customerNameMap: Record<string, string> = {}
+    const personnelPhoneMap: Record<string, string> = {}
+    const customerPhoneMap: Record<string, string> = {}
+    
+    allPersonnel.forEach((p: any) => {
+      personnelNameMap[p.id] = p.name
+      if (p.contactInfo?.phone) {
+        personnelPhoneMap[p.id] = p.contactInfo.phone
+      }
+    })
+    
+    allCustomers.forEach((c: any) => {
+      customerNameMap[c.id] = c.name
+      if (c.contactInfo?.phone) {
+        customerPhoneMap[c.id] = c.contactInfo.phone
+      }
+    })
+
+    // Check if keyword is numeric
+    const keywordLower = keyword.toLowerCase()
+    const keywordNumeric = parseFloat(keyword.replace(/[.,]/g, ''))
+    const isNumericSearch = !isNaN(keywordNumeric)
+    
+    // Check if searching for a specific customer or personnel
+    let matchedCustomerIds: Set<string> = new Set()
+    let matchedPersonnelIds: Set<string> = new Set()
+    
+    // Search by customer name or phone
+    allCustomers.forEach((c: any) => {
+      const nameMatch = c.name?.toLowerCase().includes(keywordLower)
+      const phoneMatch = c.contactInfo?.phone?.includes(keyword)
+      const emailMatch = c.contactInfo?.email?.toLowerCase().includes(keywordLower)
+      if (nameMatch || phoneMatch || emailMatch) {
+        matchedCustomerIds.add(c.id)
+      }
+    })
+    
+    // Search by personnel name or phone
+    allPersonnel.forEach((p: any) => {
+      const nameMatch = p.name?.toLowerCase().includes(keywordLower)
+      const phoneMatch = p.contactInfo?.phone?.includes(keyword)
+      const emailMatch = p.contactInfo?.email?.toLowerCase().includes(keywordLower)
+      if (nameMatch || phoneMatch || emailMatch) {
+        matchedPersonnelIds.add(p.id)
+      }
+    })
+
+    console.log('Matched customers:', matchedCustomerIds.size, 'Matched personnel:', matchedPersonnelIds.size)
+    console.log('Is numeric search:', isNumericSearch, 'Value:', keywordNumeric)
+
+    // Helper function to check if amount matches
+    const amountMatches = (amount: number) => {
+      if (!isNumericSearch) return false
+      const amountStr = amount.toString()
+      return amountStr.includes(keyword) || Math.abs(amount - keywordNumeric) < 0.01
+    }
+
+    // Helper function to check if date is in range (if date filter is active)
+    const isDateInRange = (dateStr: string) => {
+      if (!hasDateFilter) return true // No date filter, include all
+      if (!dateStr) return false
+      const recordDate = dateStr.split('T')[0] // Normalize to YYYY-MM-DD
+      return recordDate >= startDate && recordDate <= endDate
+    }
+
+    // Filter collections - OPTIONAL DATE FILTER
+    const filteredCollections = allCollections.filter((c: any) => {
+      if (!c.date) return false
+      
+      // Check date range if filter is active
+      if (!isDateInRange(c.date)) return false
+      
+      // If customer matched by name/phone, include ALL their collections
+      if (matchedCustomerIds.size > 0 && c.customerId && matchedCustomerIds.has(c.customerId)) {
+        return true
+      }
+      
+      // Get customer name from record or lookup map (for old records)
+      const customerName = c.customerName || customerNameMap[c.customerId] || ''
+      const customerNameMatch = customerName.toLowerCase().includes(keywordLower)
+      const descriptionMatch = c.description?.toLowerCase().includes(keywordLower)
+      const amountMatch = amountMatches(c.amount)
+      
+      return customerNameMatch || descriptionMatch || amountMatch
+    })
+
+    // Filter expenses - OPTIONAL DATE FILTER
+    const filteredExpenses = allExpenses.filter((e: any) => {
+      if (!e.date) return false
+      
+      // Check date range if filter is active
+      if (!isDateInRange(e.date)) return false
+      
+      const descriptionMatch = e.description?.toLowerCase().includes(keywordLower)
+      const amountMatch = amountMatches(e.amount)
+      return descriptionMatch || amountMatch
+    })
+
+    // Filter payroll records - OPTIONAL DATE FILTER
+    const filteredPayrolls = allPayrolls.filter((p: any) => {
+      if (!p.date) return false
+      
+      // Check date range if filter is active
+      if (!isDateInRange(p.date)) return false
+      
+      // If personnel matched by name/phone, include ALL their payroll records
+      if (matchedPersonnelIds.size > 0 && p.personnelId && matchedPersonnelIds.has(p.personnelId)) {
+        return true
+      }
+      
+      // Get personnel name from record or lookup map (for old records)
+      const personnelName = p.personnelName || personnelNameMap[p.personnelId] || ''
+      const personnelNameMatch = personnelName.toLowerCase().includes(keywordLower)
+      const dailyWageMatch = amountMatches(p.dailyWage)
+      const dailyPaymentMatch = amountMatches(p.dailyPayment)
+      const balanceMatch = amountMatches(p.balance)
+      
+      return personnelNameMatch || dailyWageMatch || dailyPaymentMatch || balanceMatch
+    })
+
+    // Filter transactions - OPTIONAL DATE FILTER
+    const filteredTransactions = allTransactions.filter((t: any) => {
+      if (!t.date) return false
+      
+      // Check date range if filter is active
+      if (!isDateInRange(t.date)) return false
+      
+      // If related customer/personnel matched, include this transaction
+      if (matchedCustomerIds.size > 0 && t.relatedCustomerId && matchedCustomerIds.has(t.relatedCustomerId)) {
+        return true
+      }
+      if (matchedPersonnelIds.size > 0 && t.relatedPersonnelId && matchedPersonnelIds.has(t.relatedPersonnelId)) {
+        return true
+      }
+      
+      const categoryMatch = t.category?.toLowerCase().includes(keywordLower)
+      const descriptionMatch = t.description?.toLowerCase().includes(keywordLower)
+      const amountMatch = amountMatches(t.amount)
+      
+      return categoryMatch || descriptionMatch || amountMatch
+    })
+
+    // Filter work orders - OPTIONAL DATE FILTER
+    const filteredWorkOrders = allWorkOrders.filter((w: any) => {
+      if (!w.date) return false
+      
+      // Check date range if filter is active
+      if (!isDateInRange(w.date)) return false
+      
+      // If customer matched by name/phone, include ALL their work orders
+      if (matchedCustomerIds.size > 0 && w.customerId && matchedCustomerIds.has(w.customerId)) {
+        return true
+      }
+      
+      // Get customer name from record or lookup map (for old records)
+      const customerName = w.customerName || customerNameMap[w.customerId] || ''
+      const customerNameMatch = customerName.toLowerCase().includes(keywordLower)
+      const totalAmountMatch = amountMatches(w.totalAmount)
+      const paidAmountMatch = amountMatches(w.paidAmount)
+      
+      return customerNameMatch || totalAmountMatch || paidAmountMatch
+    })
+
+    console.log('Search results:', {
+      collections: filteredCollections.length,
+      expenses: filteredExpenses.length,
+      payrolls: filteredPayrolls.length,
+      transactions: filteredTransactions.length,
+      workOrders: filteredWorkOrders.length
+    })
+
+    // Format results - NO "day" field, just full date
+    const collectionResults = filteredCollections.map((c: any) => {
+      const customerName = c.customerName || customerNameMap[c.customerId] || 'Bilinmiyor'
+      return {
+        customerName,
+        workDate: c.workDate,
+        amount: c.amount,
+        date: c.date,
+        description: c.description,
+        type: 'collection'
+      }
+    }).sort((a: any, b: any) => b.date.localeCompare(a.date)) // Sort by date descending
+
+    const expenseResults = filteredExpenses.map((e: any) => {
+      return {
+        description: e.description,
+        invoiceDate: e.invoiceDate,
+        amount: e.amount,
+        date: e.date,
+        type: 'expense'
+      }
+    }).sort((a: any, b: any) => b.date.localeCompare(a.date))
+
+    const payrollResults = filteredPayrolls.map((p: any) => {
+      const personnelName = p.personnelName || personnelNameMap[p.personnelId] || 'Bilinmiyor'
+      return {
+        personnelName,
+        dailyWage: p.dailyWage,
+        dailyPayment: p.dailyPayment,
+        balance: p.balance,
+        date: p.date,
+        type: 'payroll'
+      }
+    }).sort((a: any, b: any) => b.date.localeCompare(a.date))
+
+    const transactionResults = filteredTransactions.map((t: any) => {
+      return {
+        category: t.category,
+        description: t.description,
+        amount: t.amount,
+        transactionType: t.type,
+        date: t.date,
+        type: 'transaction'
+      }
+    }).sort((a: any, b: any) => b.date.localeCompare(a.date))
+
+    const workOrderResults = filteredWorkOrders.map((w: any) => {
+      const customerName = w.customerName || customerNameMap[w.customerId] || 'Bilinmiyor'
+      return {
+        customerName,
+        totalAmount: w.totalAmount,
+        paidAmount: w.paidAmount,
+        date: w.date,
+        type: 'workorder'
+      }
+    }).sort((a: any, b: any) => b.date.localeCompare(a.date))
+
+    // Calculate totals
+    const totalCollections = collectionResults.reduce((sum: number, c: any) => sum + (c.amount || 0), 0)
+    const totalExpenses = expenseResults.reduce((sum: number, e: any) => sum + (e.amount || 0), 0)
+    const totalPayrollWages = payrollResults.reduce((sum: number, p: any) => sum + (p.dailyWage || 0), 0)
+    const totalPayrollPayments = payrollResults.reduce((sum: number, p: any) => sum + (p.dailyPayment || 0), 0)
+    const totalTransactions = transactionResults.reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
+    const totalWorkOrders = workOrderResults.reduce((sum: number, w: any) => sum + (w.totalAmount || 0), 0)
+
+    return c.json({
+      collections: collectionResults,
+      expenses: expenseResults,
+      payrolls: payrollResults,
+      transactions: transactionResults,
+      workOrders: workOrderResults,
+      totalCollections,
+      totalExpenses,
+      totalPayrollWages,
+      totalPayrollPayments,
+      totalTransactions,
+      totalWorkOrders
+    })
+  } catch (error) {
+    console.log('Server error during history search:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
+// ============================
+// PENDING COLLECTIONS ROUTE
+// ============================
+
+app.get('/make-server-882c4243/pending-collections', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    console.log('Fetching pending collections...')
+
+    // Get all work orders and customers
+    const [allWorkOrders, allCustomers] = await Promise.all([
+      kv.getByPrefix('workorder:'),
+      kv.getByPrefix('customer:')
+    ])
+
+    // Create customer map
+    const customerMap: Record<string, any> = {}
+    allCustomers.forEach((customer: any) => {
+      customerMap[customer.id] = customer
+    })
+
+    // Filter work orders with pending payments (totalAmount > paidAmount)
+    const pendingWorkOrders = allWorkOrders.filter((wo: any) => {
+      const totalAmount = wo.totalAmount || 0
+      const paidAmount = wo.paidAmount || 0
+      const remainingAmount = totalAmount - paidAmount
+      return remainingAmount > 0.01 // Use 0.01 to handle floating point precision
+    })
+
+    console.log('Total work orders:', allWorkOrders.length)
+    console.log('Pending work orders:', pendingWorkOrders.length)
+
+    // Group by customer
+    const customerDebtsMap: Record<string, {
+      customerId: string
+      customerName: string
+      customerColor?: string
+      totalDebt: number
+      workOrders: Array<{
+        workOrderId: string
+        date: string
+        totalAmount: number
+        paidAmount: number
+        remainingAmount: number
+        description?: string
+      }>
+    }> = {}
+
+    pendingWorkOrders.forEach((wo: any) => {
+      const customerId = wo.customerId
+      const customer = customerMap[customerId]
+      const totalAmount = wo.totalAmount || 0
+      const paidAmount = wo.paidAmount || 0
+      const remainingAmount = totalAmount - paidAmount
+
+      if (!customerDebtsMap[customerId]) {
+        customerDebtsMap[customerId] = {
+          customerId,
+          customerName: customer?.name || 'Bilinmeyen Müşteri',
+          customerColor: customer?.color,
+          totalDebt: 0,
+          workOrders: []
+        }
+      }
+
+      customerDebtsMap[customerId].totalDebt += remainingAmount
+      customerDebtsMap[customerId].workOrders.push({
+        workOrderId: wo.id,
+        date: wo.date,
+        totalAmount,
+        paidAmount,
+        remainingAmount,
+        description: wo.notes || wo.description
+      })
+    })
+
+    // Convert to array
+    const customerDebts = Object.values(customerDebtsMap)
+
+    console.log('Customer debts grouped:', customerDebts.length)
+
+    return c.json({ customerDebts })
+  } catch (error) {
+    console.log('Server error fetching pending collections:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
+// Record payment for a work order
+app.post('/make-server-882c4243/work-orders/:workOrderId/payment', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    const userRole = user.user_metadata?.role
+    if (userRole !== 'admin' && userRole !== 'secretary') {
+      return c.json({ error: 'Forbidden' }, 403)
+    }
+
+    const workOrderId = c.req.param('workOrderId')
+    const body = await c.req.json()
+    const { amount, date } = body
+
+    if (!amount || !date) {
+      return c.json({ error: 'Amount and date are required' }, 400)
+    }
+
+    const paymentAmount = parseFloat(amount)
+    if (isNaN(paymentAmount) || paymentAmount <= 0) {
+      return c.json({ error: 'Invalid payment amount' }, 400)
+    }
+
+    // Get work order
+    const workOrder = await kv.get(workOrderId)
+    if (!workOrder) {
+      return c.json({ error: 'Work order not found' }, 404)
+    }
+
+    const totalAmount = workOrder.totalAmount || 0
+    const currentPaidAmount = workOrder.paidAmount || 0
+    const remainingAmount = totalAmount - currentPaidAmount
+
+    if (paymentAmount > remainingAmount + 0.01) { // +0.01 for floating point precision
+      return c.json({ error: 'Payment amount exceeds remaining balance' }, 400)
+    }
+
+    // Update work order
+    const newPaidAmount = currentPaidAmount + paymentAmount
+    workOrder.paidAmount = newPaidAmount
+    workOrder.updatedAt = new Date().toISOString()
+    workOrder.updatedBy = user.id
+    workOrder.updatedByName = user.user_metadata?.name
+
+    await kv.set(workOrderId, workOrder)
+
+    // Get customer info
+    const customer = await kv.get(workOrder.customerId)
+    const customerName = customer?.name || 'Bilinmiyor'
+
+    // Create income transaction
+    const transactionId = `transaction:${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const transaction = {
+      id: transactionId,
+      type: 'income',
+      amount: paymentAmount,
+      date: date,
+      category: 'İş Emri Tahsilatı',
+      description: `${customerName} - ${workOrder.description || 'Temizlik hizmeti'} (Kısmi ödeme)`,
+      relatedCustomerId: workOrder.customerId,
+      relatedWorkOrderId: workOrderId,
+      createdAt: new Date().toISOString(),
+      createdBy: user.id,
+      createdByName: user.user_metadata?.name
+    }
+    await kv.set(transactionId, transaction)
+
+    // Create collection record for daily cash flow
+    const collectionId = `collection:${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
+    const collection = {
+      id: collectionId,
+      customerId: workOrder.customerId,
+      customerName: customerName,
+      amount: paymentAmount,
+      date: date,
+      description: workOrder.description || 'İş emri kısmi ödemesi',
+      workDate: workOrder.date,
+      relatedWorkOrderId: workOrderId,
+      createdAt: new Date().toISOString(),
+      createdBy: user.id,
+      createdByName: user.user_metadata?.name
+    }
+    await kv.set(collectionId, collection)
+
+    // Log the action
+    await kv.set(`log:${Date.now()}`, {
+      action: 'work_order_payment',
+      userId: user.id,
+      userName: user.user_metadata?.name,
+      workOrderId,
+      amount: paymentAmount,
+      newPaidAmount,
+      timestamp: new Date().toISOString()
+    })
+
+    console.log('Payment recorded successfully:', {
+      workOrderId,
+      paymentAmount,
+      newPaidAmount,
+      remainingAmount: totalAmount - newPaidAmount
+    })
+
+    return c.json({ 
+      success: true, 
+      workOrder,
+      transaction,
+      collection 
+    })
+  } catch (error) {
+    console.log('Server error recording payment:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
+// Search collections and expenses by keyword for a specific month - MONTHLY SEARCH (kept for backwards compatibility)
 app.get('/make-server-882c4243/monthly-search', async (c) => {
   try {
     const user = await getAuthUser(c.req.raw)

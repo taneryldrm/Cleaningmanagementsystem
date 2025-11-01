@@ -121,12 +121,12 @@ export function PersonnelPayroll({ user }: { user: any }) {
       const payload = {
         personnelId: editingPersonnel.id,
         date: selectedDate,
-        carryover: parseFloat(formData.carryover) || 0,
+        // carryover is NOT sent - backend calculates it automatically
         dailyWage: parseFloat(formData.dailyWage) || 0,
         dailyPayment: parseFloat(formData.dailyPayment) || 0
       }
 
-      console.log('Saving payroll with payload:', payload)
+      console.log('Saving payroll with payload (carryover auto-calculated):', payload)
 
       await apiCall('/payroll', {
         method: 'POST',
@@ -552,25 +552,30 @@ export function PersonnelPayroll({ user }: { user: any }) {
             </DialogTitle>
           </DialogHeader>
           <form onSubmit={handleSavePayroll} className="space-y-4">
-            {editingPersonnel && previousBalances[editingPersonnel.id] > 0 && (
-              <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-sm">
-                <strong className="text-blue-800">ℹ️ Bilgi:</strong>
-                <p className="text-blue-700 mt-1">
-                  Bir önceki günün borç bakiyesi ({previousBalances[editingPersonnel.id].toLocaleString('tr-TR')} ₺) otomatik olarak devir olarak getirilmiştir.
-                </p>
-              </div>
-            )}
+            <div className="p-3 bg-blue-50 border border-blue-200 rounded-md text-sm">
+              <strong className="text-blue-800">ℹ️ Otomatik Devir Sistemi:</strong>
+              <p className="text-blue-700 mt-1">
+                Devir tutarı, personelin önceki borç bakiyesinden otomatik olarak hesaplanır. 
+                {editingPersonnel && previousBalances[editingPersonnel.id] > 0 && (
+                  <span> Şu anki devir: <strong>{previousBalances[editingPersonnel.id].toLocaleString('tr-TR')} ₺</strong></span>
+                )}
+              </p>
+            </div>
             <div className="space-y-2">
-              <Label htmlFor="carryover">Devir (₺)</Label>
+              <Label htmlFor="carryover">Devir (₺) - Otomatik Hesaplanır</Label>
               <Input
                 id="carryover"
                 type="number"
                 step="0.01"
                 value={formData.carryover}
-                onChange={(e) => setFormData({ ...formData, carryover: e.target.value })}
+                readOnly
+                disabled
+                className="bg-gray-100 cursor-not-allowed"
                 placeholder="0.00"
               />
-              <p className="text-xs text-gray-500">Bir önceki günün borç bakiyesi otomatik olarak buraya gelir</p>
+              <p className="text-xs text-gray-500">
+                <strong>⚠️ Bu alan otomatik hesaplanır ve değiştirilemez.</strong> Borç bakiyesi sıfırlanana kadar otomatik olarak devam eder.
+              </p>
             </div>
             <div className="space-y-2">
               <Label htmlFor="dailyWage">Bugün Yevmiye (₺)</Label>

@@ -2,100 +2,242 @@ import { useEffect, useState } from 'react'
 import { apiCall } from '../utils/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Button } from './ui/button'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
+import { Badge } from './ui/badge'
 import { 
-  ClipboardList, 
-  FileText, 
-  TrendingUp, 
-  TrendingDown, 
+  Calendar,
   Users,
+  Search,
+  Plus,
+  Phone,
+  MapPin,
+  DollarSign,
+  FileText,
   AlertCircle,
   CheckCircle,
-  Clock,
-  RefreshCw,
-  DollarSign,
-  Calendar,
-  Target,
-  ArrowUpRight,
-  ArrowDownRight
+  Clock
 } from 'lucide-react'
-import { Alert, AlertDescription } from './ui/alert'
-import { 
-  LineChart, 
-  Line, 
-  ResponsiveContainer,
-  Tooltip
-} from 'recharts'
+import { toast } from 'sonner@2.0.3'
 
-interface DashboardData {
-  todayWorkOrders: number
-  draftCount: number
-  income: number
-  expense: number
-  balance: number
-  totalReceivables: number
-  totalPayables: number
-  myTasks?: any[]
-  todayAssignments?: any[]
-  thisMonthIncome?: number
-  lastMonthIncome?: number
-  thisMonthExpense?: number
-  lastMonthExpense?: number
-  thisMonthProfit?: number
-  lastMonthProfit?: number
-  recentTrend?: Array<{ date: string; amount: number }>
-  upcomingWorkOrders?: number
-  completedThisMonth?: number
-  problematicCustomers?: number
+interface DailyPersonnelCount {
+  date: string
+  count: number
+  workOrders: any[]
+}
+
+interface CustomerSearchResult {
+  id: string
+  name: string
+  phone: string
+  address: string
+  type: 'regular' | 'problematic' | 'normal'
+  workOrders: {
+    id: string
+    date: string
+    status: string
+    totalAmount: number
+    paidAmount: number
+    description: string
+  }[]
+  totalSpent: number
+  totalDebt: number
+  lastWorkDate: string | null
 }
 
 interface DashboardProps {
   user: any
+  onNavigate?: (page: string) => void
 }
 
-export function Dashboard({ user }: DashboardProps) {
-  const [data, setData] = useState<DashboardData | null>(null)
+export function Dashboard({ user, onNavigate }: DashboardProps) {
   const [loading, setLoading] = useState(true)
-  const [migrating, setMigrating] = useState(false)
-  const [migrationMessage, setMigrationMessage] = useState('')
+  const [dailyPersonnel, setDailyPersonnel] = useState<DailyPersonnelCount[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
+  const [searchResult, setSearchResult] = useState<CustomerSearchResult | null>(null)
+  const [searching, setSearching] = useState(false)
+  const [pendingAmount, setPendingAmount] = useState(0)
+  const [pendingCustomers, setPendingCustomers] = useState(0)
+
+  const userRole = user?.user_metadata?.role
+  const userName = user?.user_metadata?.name || 'Kullanıcı'
 
   useEffect(() => {
-    loadDashboard()
+    loadDashboardData()
+    loadPendingCollections()
   }, [])
 
-  const loadDashboard = async () => {
+  const loadDashboardData = async () => {
     try {
-      const result = await apiCall('/dashboard')
-      console.log('Dashboard data received:', result)
-      console.log('This Month Income:', result.thisMonthIncome)
-      console.log('This Month Expense:', result.thisMonthExpense)
-      console.log('This Month Profit:', result.thisMonthProfit)
-      console.log('Full data as JSON:', JSON.stringify(result, null, 2))
-      setData(result)
+      setLoading(true)
+      
+      // Get next 10 days of work orders
+      const today = new Date()
+      const next10Days: DailyPersonnelCount[] = []
+      
+      const workOrdersResult = await apiCall('/work-orders')
+      const workOrders = workOrdersResult.workOrders || []
+      
+      for (let i = 0; i < 10; i++) {
+        const date = new Date(today)
+        date.setDate(date.getDate() + i)
+        const dateStr = date.toISOString().split('T')[0]
+        
+        const dayWorkOrders = workOrders.filter((wo: any) => {
+          return wo.date?.startsWith(dateStr) && 
+                 (wo.status === 'draft' || wo.status === 'approved' || wo.status === 'completed')
+        })
+        
+        // Count unique personnel
+        const uniquePersonnel = new Set<string>()
+        dayWorkOrders.forEach((wo: any) => {
+          if (wo.personnelIds && Array.isArray(wo.personnelIds)) {
+            wo.personnelIds.forEach((id: string) => uniquePersonnel.add(id))
+          }
+        })
+        
+        next10Days.push({
+          date: dateStr,
+          count: uniquePersonnel.size,
+          workOrders: dayWorkOrders
+        })
+      }
+      
+      setDailyPersonnel(next10Days)
     } catch (error) {
-      console.error('Error loading dashboard:', error)
+      console.error('Error loading dashboard data:', error)
+      toast.error('Dashboard verileri yüklenirken hata oluştu')
     } finally {
       setLoading(false)
     }
   }
 
-  const handleMigrateCollections = async () => {
-    if (!confirm('Mevcut iş emirlerini günlük tahsilat kayıtlarına aktarmak istediğinize emin misiniz?')) {
+  const loadPendingCollections = async () => {
+    try {
+      const response = await apiCall('/pending-collections')
+      const customerDebts = response.customerDebts || []
+      
+      const totalAmount = customerDebts.reduce((sum: number, debt: any) => sum + debt.totalDebt, 0)
+      setPendingAmount(totalAmount)
+      setPendingCustomers(customerDebts.length)
+    } catch (error) {
+      console.error('Error loading pending collections:', error)
+    }
+  }
+
+  const handleSearch = async () => {
+    if (!searchQuery.trim()) {
+      toast.error('Lütfen müşteri adı veya telefon numarası girin')
       return
     }
 
-    setMigrating(true)
-    setMigrationMessage('')
-
     try {
-      const result = await apiCall('/migrate-collections', { method: 'POST' })
-      setMigrationMessage(`✅ ${result.message}`)
-      // Reload dashboard to show updated data
-      loadDashboard()
+      setSearching(true)
+      setSearchResult(null)
+      
+      const customersResult = await apiCall('/customers')
+      const customers = customersResult.customers || []
+      
+      const query = searchQuery.toLowerCase().trim()
+      const customer = customers.find((c: any) => {
+        const nameMatch = c.name?.toLowerCase().includes(query)
+        const phoneMatch = c.contactInfo?.phone?.includes(query)
+        return nameMatch || phoneMatch
+      })
+      
+      if (!customer) {
+        toast.error('Müşteri bulunamadı')
+        return
+      }
+      
+      // Get all work orders for this customer
+      const workOrdersResult = await apiCall('/work-orders')
+      const allWorkOrders = workOrdersResult.workOrders || []
+      
+      const customerWorkOrders = allWorkOrders
+        .filter((wo: any) => wo.customerId === customer.id)
+        .sort((a: any, b: any) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      
+      // Calculate totals
+      let totalSpent = 0
+      let totalDebt = 0
+      
+      customerWorkOrders.forEach((wo: any) => {
+        totalSpent += wo.paidAmount || 0
+        totalDebt += (wo.totalAmount || 0) - (wo.paidAmount || 0)
+      })
+      
+      const lastWorkDate = customerWorkOrders.length > 0 
+        ? customerWorkOrders[0].date 
+        : null
+      
+      setSearchResult({
+        id: customer.id,
+        name: customer.name,
+        phone: customer.contactInfo?.phone || '-',
+        address: customer.contactInfo?.address || '-',
+        type: customer.type || 'normal',
+        workOrders: customerWorkOrders.map((wo: any) => ({
+          id: wo.id,
+          date: wo.date,
+          status: wo.status,
+          totalAmount: wo.totalAmount || 0,
+          paidAmount: wo.paidAmount || 0,
+          description: wo.description || ''
+        })),
+        totalSpent,
+        totalDebt,
+        lastWorkDate
+      })
+      
+      toast.success('Müşteri bulundu!')
     } catch (error) {
-      console.error('Error migrating collections:', error)
-      setMigrationMessage(`❌ Hata: ${error}`)
+      console.error('Error searching customer:', error)
+      toast.error('Arama sırasında hata oluştu')
     } finally {
-      setMigrating(false)
+      setSearching(false)
+    }
+  }
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('tr-TR', {
+      style: 'currency',
+      currency: 'TRY',
+      minimumFractionDigits: 2
+    }).format(amount)
+  }
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('tr-TR', { 
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric',
+      weekday: 'long'
+    })
+  }
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return <Badge variant="outline" className="bg-yellow-100 text-yellow-800">Taslak</Badge>
+      case 'approved':
+        return <Badge className="bg-blue-100 text-blue-800">Onaylandı</Badge>
+      case 'completed':
+        return <Badge className="bg-green-100 text-green-800">Tamamlandı</Badge>
+      default:
+        return <Badge variant="secondary">{status}</Badge>
+    }
+  }
+
+  const getCustomerTypeBadge = (type: string) => {
+    switch (type) {
+      case 'regular':
+        return <Badge className="bg-blue-100 text-blue-800">Düzenli</Badge>
+      case 'problematic':
+        return <Badge className="bg-red-100 text-red-800">Sıkıntılı</Badge>
+      default:
+        return <Badge className="bg-gray-100 text-gray-800">Normal</Badge>
     }
   }
 
@@ -107,388 +249,251 @@ export function Dashboard({ user }: DashboardProps) {
     )
   }
 
-  if (!data) {
-    return (
-      <Alert variant="destructive">
-        <AlertCircle className="h-4 w-4" />
-        <AlertDescription>Dashboard verileri yüklenemedi</AlertDescription>
-      </Alert>
-    )
-  }
-
-  const role = user?.user_metadata?.role
-  const userName = user?.user_metadata?.name || 'Kullanıcı'
-
-  const formatCurrency = (amount: number) => {
-    return new Intl.NumberFormat('tr-TR', {
-      style: 'currency',
-      currency: 'TRY',
-      minimumFractionDigits: 0,
-      maximumFractionDigits: 0
-    }).format(amount)
-  }
-
-  const calculateChange = (current: number = 0, previous: number = 0) => {
-    if (previous === 0) return 0
-    return ((current - previous) / previous) * 100
-  }
-
-  const formatPercent = (value: number) => {
-    return `${value > 0 ? '+' : ''}${value.toFixed(1)}%`
-  }
-
-  const incomeChange = calculateChange(data?.thisMonthIncome, data?.lastMonthIncome)
-  const expenseChange = calculateChange(data?.thisMonthExpense, data?.lastMonthExpense)
-  const profitChange = calculateChange(data?.thisMonthProfit, data?.lastMonthProfit)
-
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h1>Hoşgeldiniz, {userName}</h1>
           <p className="text-gray-500">
-            {role === 'admin' && 'Yönetici Paneli'}
-            {role === 'secretary' && 'Sekreter Paneli'}
-            {role === 'driver' && 'Şoför Paneli'}
-            {role === 'cleaner' && 'Temizlikçi Paneli'}
+            {userRole === 'admin' && 'Yönetici Paneli'}
+            {userRole === 'secretary' && 'Sekreter Paneli'}
+            {userRole === 'driver' && 'Şoför Paneli'}
+            {userRole === 'cleaner' && 'Temizlikçi Paneli'}
           </p>
         </div>
-        <div className="flex gap-2">
-          <Button onClick={loadDashboard} variant="outline" size="sm">
-            <RefreshCw className="h-4 w-4 mr-2" />
-            Yenile
+        {(userRole === 'admin' || userRole === 'secretary') && (
+          <Button onClick={() => onNavigate?.('work-orders')}>
+            <Plus className="h-4 w-4 mr-2" />
+            Yeni İş Emri Oluştur
           </Button>
-          {role === 'admin' && (
-            <Button
-              onClick={handleMigrateCollections}
-              disabled={migrating}
-              variant={data && data.balance === 0 ? "default" : "outline"}
-              size="sm"
-              className={data && data.balance === 0 ? "animate-pulse bg-blue-600 hover:bg-blue-700" : ""}
-            >
-              <RefreshCw className={`h-4 w-4 mr-2 ${migrating ? 'animate-spin' : ''}`} />
-              Senkronize Et
-            </Button>
-          )}
-        </div>
-      </div>
-
-      {/* Migration Message */}
-      {migrationMessage && (
-        <Alert variant={migrationMessage.startsWith('✅') ? 'default' : 'destructive'}>
-          <AlertDescription>{migrationMessage}</AlertDescription>
-        </Alert>
-      )}
-
-      {/* Debug Info - Show if no data */}
-      {role === 'admin' && data && (data.thisMonthIncome === 0 && data.thisMonthExpense === 0 && data.balance === 0) && (
-        <Alert variant="default" className="bg-blue-50 border-blue-200 border-2">
-          <AlertCircle className="h-4 w-4 text-blue-600" />
-          <AlertDescription>
-            <div className="space-y-2">
-              <div>
-                <strong className="text-blue-900">⚠️ Dashboard'da veri görünmüyor!</strong>
-              </div>
-              <div className="text-sm">
-                Mevcut iş emirlerinizden tahsilat kayıtları henüz oluşturulmamış. 
-                Sağ üstteki <strong>"Senkronize Et"</strong> butonuna basarak tüm iş emirlerinden otomatik tahsilat kayıtları oluşturabilirsiniz.
-              </div>
-              <div className="text-xs text-gray-600 mt-2 pt-2 border-t border-blue-200">
-                Sistem Durumu: Gelir={formatCurrency(data.thisMonthIncome || 0)}, 
-                Gider={formatCurrency(data.thisMonthExpense || 0)}, 
-                Bakiye={formatCurrency(data.balance || 0)}
-              </div>
-            </div>
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Alerts */}
-      {data.draftCount > 0 && role !== 'cleaner' && role !== 'driver' && (
-        <Alert>
-          <Clock className="h-4 w-4" />
-          <AlertDescription>
-            {data.draftCount} adet onay bekleyen iş emri var. 
-            Gece 00:00'da otomatik olarak onaylanacak.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {data.totalReceivables > 0 && role !== 'cleaner' && role !== 'driver' && (
-        <Alert>
-          <AlertCircle className="h-4 w-4" />
-          <AlertDescription>
-            Müşterilerden tahsil edilmesi gereken toplam {formatCurrency(data.totalReceivables)} var.
-          </AlertDescription>
-        </Alert>
-      )}
-
-      {/* Main KPI Cards - Enhanced */}
-      {role !== 'cleaner' && role !== 'driver' && (
-        <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-          <Card className="bg-gradient-to-br from-green-50 to-green-100 border-green-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm">Bu Ay Gelir</CardTitle>
-              <DollarSign className="h-5 w-5 text-green-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl text-green-700">{formatCurrency(data.thisMonthIncome || 0)}</div>
-              <div className="flex items-center gap-1 mt-1">
-                {incomeChange >= 0 ? (
-                  <ArrowUpRight className="h-4 w-4 text-green-600" />
-                ) : (
-                  <ArrowDownRight className="h-4 w-4 text-red-600" />
-                )}
-                <span className={`text-xs ${incomeChange >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-                  {formatPercent(incomeChange)} geçen aya göre
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-red-50 to-red-100 border-red-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm">Bu Ay Gider</CardTitle>
-              <TrendingDown className="h-5 w-5 text-red-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl text-red-700">{formatCurrency(data.thisMonthExpense || 0)}</div>
-              <div className="flex items-center gap-1 mt-1">
-                {expenseChange >= 0 ? (
-                  <ArrowUpRight className="h-4 w-4 text-red-600" />
-                ) : (
-                  <ArrowDownRight className="h-4 w-4 text-green-600" />
-                )}
-                <span className={`text-xs ${expenseChange >= 0 ? 'text-red-600' : 'text-green-600'}`}>
-                  {formatPercent(expenseChange)} geçen aya göre
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-blue-50 to-blue-100 border-blue-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm">Bu Ay Kar</CardTitle>
-              <TrendingUp className="h-5 w-5 text-blue-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl text-blue-700">{formatCurrency(data.thisMonthProfit || 0)}</div>
-              <div className="flex items-center gap-1 mt-1">
-                {profitChange >= 0 ? (
-                  <ArrowUpRight className="h-4 w-4 text-blue-600" />
-                ) : (
-                  <ArrowDownRight className="h-4 w-4 text-red-600" />
-                )}
-                <span className={`text-xs ${profitChange >= 0 ? 'text-blue-600' : 'text-red-600'}`}>
-                  {formatPercent(profitChange)} geçen aya göre
-                </span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card className="bg-gradient-to-br from-purple-50 to-purple-100 border-purple-200">
-            <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-              <CardTitle className="text-sm">Bekleyen Tahsilat</CardTitle>
-              <Target className="h-5 w-5 text-purple-600" />
-            </CardHeader>
-            <CardContent>
-              <div className="text-2xl text-purple-700">{formatCurrency(data.totalReceivables)}</div>
-              <p className="text-xs text-purple-600 mt-1">
-                Müşterilerden alınacak
-              </p>
-            </CardContent>
-          </Card>
-        </div>
-      )}
-
-      {/* Quick Stats Row */}
-      <div className="grid gap-4 md:grid-cols-2 lg:grid-cols-4">
-        <Card>
-          <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-            <CardTitle className="text-sm">Bugünkü İşler</CardTitle>
-            <Calendar className="h-4 w-4 text-blue-600" />
-          </CardHeader>
-          <CardContent>
-            <div className="text-2xl">{data.todayWorkOrders}</div>
-            <p className="text-xs text-muted-foreground">
-              Bugün planlanmış
-            </p>
-          </CardContent>
-        </Card>
-
-        {role !== 'cleaner' && (
-          <>
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm">Yaklaşan İşler</CardTitle>
-                <ClipboardList className="h-4 w-4 text-orange-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl">{data.upcomingWorkOrders || 0}</div>
-                <p className="text-xs text-muted-foreground">
-                  Gelecek 7 gün
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm">Bu Ay Tamamlanan</CardTitle>
-                <CheckCircle className="h-4 w-4 text-green-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl">{data.completedThisMonth || 0}</div>
-                <p className="text-xs text-muted-foreground">
-                  Tamamlanan işler
-                </p>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between space-y-0 pb-2">
-                <CardTitle className="text-sm">Sıkıntılı Müşteri</CardTitle>
-                <AlertCircle className="h-4 w-4 text-red-600" />
-              </CardHeader>
-              <CardContent>
-                <div className="text-2xl">{data.problematicCustomers || 0}</div>
-                <p className="text-xs text-muted-foreground">
-                  Takip gerekiyor
-                </p>
-              </CardContent>
-            </Card>
-          </>
         )}
       </div>
 
-      {/* Financial Overview with Trend */}
-      {role !== 'cleaner' && role !== 'driver' && (
-        <div className="grid gap-4 md:grid-cols-2">
-          <Card>
-            <CardHeader>
-              <CardTitle>Alacak/Verecek Durumu</CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              <div className="flex items-center justify-between p-3 bg-red-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <TrendingUp className="h-5 w-5 text-red-600" />
-                  <span>Müşteriden Alınacak</span>
+      {/* Pending Collections Alert - Admin & Secretary Only */}
+      {(userRole === 'admin' || userRole === 'secretary') && pendingAmount > 0 && (
+        <Card className="border-red-200 bg-red-50">
+          <CardContent className="py-4">
+            <div className="flex items-center justify-between">
+              <div className="flex items-center gap-4">
+                <div className="flex items-center justify-center w-12 h-12 rounded-full bg-red-200">
+                  <AlertCircle className="h-6 w-6 text-red-600" />
                 </div>
-                <span className="font-bold text-red-600">{formatCurrency(data.totalReceivables)}</span>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-orange-50 rounded-lg">
-                <div className="flex items-center gap-2">
-                  <TrendingDown className="h-5 w-5 text-orange-600" />
-                  <span>Çalışana Ödenecek</span>
-                </div>
-                <span className="font-bold text-orange-600">{formatCurrency(data.totalPayables)}</span>
-              </div>
-              <div className="flex items-center justify-between p-3 bg-gray-100 rounded-lg border-t-2 border-gray-300">
-                <div className="flex items-center gap-2">
-                  <DollarSign className="h-5 w-5 text-gray-700" />
-                  <span className="font-medium">Net Bakiye</span>
-                </div>
-                <span className="font-bold text-gray-700">{formatCurrency(data.balance)}</span>
-              </div>
-            </CardContent>
-          </Card>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Son 7 Gün Gelir Trendi</CardTitle>
-            </CardHeader>
-            <CardContent>
-              {data.recentTrend && data.recentTrend.length > 0 ? (
-                <ResponsiveContainer width="100%" height={150}>
-                  <LineChart data={data.recentTrend}>
-                    <Tooltip 
-                      formatter={(value) => formatCurrency(Number(value))}
-                      labelFormatter={(label) => `Tarih: ${label}`}
-                    />
-                    <Line 
-                      type="monotone" 
-                      dataKey="amount" 
-                      stroke="#3b82f6" 
-                      strokeWidth={2}
-                      dot={{ fill: '#3b82f6', r: 4 }}
-                    />
-                  </LineChart>
-                </ResponsiveContainer>
-              ) : (
-                <div className="h-[150px] flex items-center justify-center text-gray-400">
-                  Trend verisi yok
-                </div>
-              )}
-              <div className="grid grid-cols-3 gap-2 mt-4 pt-4 border-t">
-                <div className="text-center">
-                  <div className="text-xs text-gray-500">Onay Bekleyen</div>
-                  <div className="text-lg font-bold text-yellow-600">{data.draftCount}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500">Bugün</div>
-                  <div className="text-lg font-bold text-blue-600">{data.todayWorkOrders}</div>
-                </div>
-                <div className="text-center">
-                  <div className="text-xs text-gray-500">Tamamlanan</div>
-                  <div className="text-lg font-bold text-green-600">{data.completedThisMonth || 0}</div>
+                <div>
+                  <h3 className="font-semibold text-red-900">Bekleyen Tahsilatlar</h3>
+                  <p className="text-sm text-red-700">
+                    {pendingCustomers} müşteriden toplam {formatCurrency(pendingAmount)} alacak var
+                  </p>
                 </div>
               </div>
-            </CardContent>
-          </Card>
-        </div>
+              <Button 
+                variant="outline" 
+                className="border-red-300 hover:bg-red-100"
+                onClick={() => onNavigate?.('pending-collections')}
+              >
+                <DollarSign className="h-4 w-4 mr-2" />
+                Detayları Gör
+              </Button>
+            </div>
+          </CardContent>
+        </Card>
       )}
 
-      {/* Driver View */}
-      {role === 'driver' && data.todayAssignments && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Bugünkü Görevler</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {data.todayAssignments.length === 0 ? (
-              <p className="text-gray-500">Bugün için planlanmış görev yok</p>
-            ) : (
-              <div className="space-y-2">
-                {data.todayAssignments.map((task: any) => (
-                  <div key={task.id} className="p-3 bg-gray-50 rounded-lg">
-                    <div className="flex items-center justify-between">
-                      <span>{task.description || 'İş emri'}</span>
-                      <div className="flex items-center gap-2">
-                        <Users className="h-4 w-4 text-gray-500" />
-                        <span className="text-sm">{task.personnelCount} kişi</span>
+      {/* Daily Personnel Count - Next 10 Days */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Calendar className="h-5 w-5" />
+            Önümüzdeki 10 Gün - Çalışan Personel Sayısı
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          <div className="space-y-3">
+            {dailyPersonnel.map((day, index) => {
+              const isToday = index === 0
+              return (
+                <div 
+                  key={day.date} 
+                  className={`flex items-center justify-between p-4 rounded-lg border ${
+                    isToday ? 'bg-blue-50 border-blue-200' : 'bg-gray-50 border-gray-200'
+                  }`}
+                >
+                  <div className="flex items-center gap-3">
+                    <div className={`flex items-center justify-center w-12 h-12 rounded-full ${
+                      isToday ? 'bg-blue-200' : 'bg-gray-200'
+                    }`}>
+                      <span className="font-bold">
+                        {new Date(day.date).toLocaleDateString('tr-TR', { day: 'numeric' })}
+                      </span>
+                    </div>
+                    <div>
+                      <div className="font-medium">
+                        {formatDate(day.date)}
+                        {isToday && <Badge className="ml-2 bg-blue-600">Bugün</Badge>}
+                      </div>
+                      <div className="text-sm text-gray-600">
+                        {day.workOrders.length} iş emri
                       </div>
                     </div>
                   </div>
-                ))}
-              </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
-
-      {/* Cleaner View */}
-      {role === 'cleaner' && data.myTasks && (
-        <Card>
-          <CardHeader>
-            <CardTitle>Bugünkü Görevlerim</CardTitle>
-          </CardHeader>
-          <CardContent>
-            {data.myTasks.length === 0 ? (
-              <p className="text-gray-500">Bugün için planlanmış göreviniz yok</p>
-            ) : (
-              <div className="space-y-2">
-                {data.myTasks.map((task: any) => (
-                  <div key={task.id} className="p-3 bg-gray-50 rounded-lg">
-                    <p>{task.description || 'İş emri'}</p>
-                    <p className="text-sm text-gray-500">
-                      Durum: {task.status === 'approved' ? 'Onaylandı' : 'Beklemede'}
-                    </p>
+                  <div className="flex items-center gap-2">
+                    <Users className={`h-5 w-5 ${isToday ? 'text-blue-600' : 'text-gray-600'}`} />
+                    <span className={`text-2xl font-bold ${isToday ? 'text-blue-600' : 'text-gray-700'}`}>
+                      {day.count}
+                    </span>
+                    <span className="text-gray-500">personel</span>
                   </div>
-                ))}
+                </div>
+              )
+            })}
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Customer Search */}
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2">
+            <Search className="h-5 w-5" />
+            Müşteri Arama
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          <div className="flex gap-2">
+            <div className="flex-1">
+              <Input
+                placeholder="Müşteri adı veya telefon numarası..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                onKeyDown={(e) => e.key === 'Enter' && handleSearch()}
+              />
+            </div>
+            <Button onClick={handleSearch} disabled={searching}>
+              <Search className="h-4 w-4 mr-2" />
+              {searching ? 'Aranıyor...' : 'Ara'}
+            </Button>
+          </div>
+
+          {searchResult && (
+            <div className="space-y-4 pt-4 border-t">
+              {/* Customer Info */}
+              <div className="bg-gray-50 p-4 rounded-lg space-y-3">
+                <div className="flex items-start justify-between">
+                  <div>
+                    <h3 className="text-xl font-bold">{searchResult.name}</h3>
+                    {getCustomerTypeBadge(searchResult.type)}
+                  </div>
+                  <Button 
+                    variant="outline" 
+                    size="sm"
+                    onClick={() => onNavigate?.('customers')}
+                  >
+                    Detaylar
+                  </Button>
+                </div>
+                
+                <div className="grid grid-cols-2 gap-4">
+                  <div className="flex items-center gap-2">
+                    <Phone className="h-4 w-4 text-gray-600" />
+                    <span>{searchResult.phone}</span>
+                  </div>
+                  <div className="flex items-center gap-2">
+                    <MapPin className="h-4 w-4 text-gray-600" />
+                    <span className="truncate">{searchResult.address}</span>
+                  </div>
+                </div>
+
+                <div className="grid grid-cols-3 gap-4 pt-3 border-t">
+                  <div>
+                    <div className="text-xs text-gray-500">Toplam Harcama</div>
+                    <div className="text-lg font-bold text-green-600">
+                      {formatCurrency(searchResult.totalSpent)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Kalan Borç</div>
+                    <div className="text-lg font-bold text-red-600">
+                      {formatCurrency(searchResult.totalDebt)}
+                    </div>
+                  </div>
+                  <div>
+                    <div className="text-xs text-gray-500">Son İş</div>
+                    <div className="text-sm font-medium">
+                      {searchResult.lastWorkDate 
+                        ? new Date(searchResult.lastWorkDate).toLocaleDateString('tr-TR')
+                        : 'Yok'
+                      }
+                    </div>
+                  </div>
+                </div>
               </div>
-            )}
-          </CardContent>
-        </Card>
-      )}
+
+              {/* Work Orders History */}
+              <div>
+                <h4 className="font-medium mb-3 flex items-center gap-2">
+                  <FileText className="h-4 w-4" />
+                  İş Geçmişi ({searchResult.workOrders.length} adet)
+                </h4>
+                
+                {searchResult.workOrders.length === 0 ? (
+                  <div className="text-center py-8 text-gray-500">
+                    Bu müşteri için henüz iş emri bulunmuyor
+                  </div>
+                ) : (
+                  <div className="space-y-2 max-h-96 overflow-y-auto">
+                    {searchResult.workOrders.map((wo) => (
+                      <div 
+                        key={wo.id} 
+                        className="border rounded-lg p-3 hover:bg-gray-50 transition-colors"
+                      >
+                        <div className="flex items-start justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            {wo.status === 'completed' && <CheckCircle className="h-4 w-4 text-green-600" />}
+                            {wo.status === 'approved' && <Clock className="h-4 w-4 text-blue-600" />}
+                            {wo.status === 'draft' && <AlertCircle className="h-4 w-4 text-yellow-600" />}
+                            <span className="font-medium">
+                              {new Date(wo.date).toLocaleDateString('tr-TR', { 
+                                day: 'numeric',
+                                month: 'long',
+                                year: 'numeric'
+                              })}
+                            </span>
+                          </div>
+                          {getStatusBadge(wo.status)}
+                        </div>
+                        
+                        {wo.description && (
+                          <p className="text-sm text-gray-600 mb-2">{wo.description}</p>
+                        )}
+                        
+                        <div className="flex items-center justify-between text-sm">
+                          <div className="flex items-center gap-4">
+                            <div>
+                              <span className="text-gray-500">Tutar: </span>
+                              <span className="font-medium">{formatCurrency(wo.totalAmount)}</span>
+                            </div>
+                            <div>
+                              <span className="text-gray-500">Ödenen: </span>
+                              <span className="font-medium text-green-600">
+                                {formatCurrency(wo.paidAmount)}
+                              </span>
+                            </div>
+                          </div>
+                          {wo.paidAmount < wo.totalAmount && (
+                            <div className="text-red-600 font-medium">
+                              Kalan: {formatCurrency(wo.totalAmount - wo.paidAmount)}
+                            </div>
+                          )}
+                        </div>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+        </CardContent>
+      </Card>
     </div>
   )
 }

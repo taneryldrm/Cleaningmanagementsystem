@@ -6,10 +6,11 @@ import { Label } from './ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog'
 import { Badge } from './ui/badge'
-import { Plus, Search, Edit, Trash2, UserCheck, UserX, Eye, Filter } from 'lucide-react'
+import { Plus, Search, Edit, Trash2, UserCheck, UserX, Eye, Filter, X, Calendar, DollarSign, TrendingUp, AlertCircle, CheckCircle, Clock } from 'lucide-react'
 import { Textarea } from './ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { Switch } from './ui/switch'
+import { toast } from 'sonner@2.0.3'
 
 interface Personnel {
   id: string
@@ -22,6 +23,21 @@ interface Personnel {
   totalBalance?: number
 }
 
+interface WorkOrder {
+  id: string
+  date: string
+  status: string
+  totalAmount: number
+  paidAmount: number
+  description: string
+  customerId: string
+  customerName?: string
+  personnelIds: string[]
+  personnelPayments: { [key: string]: number }
+}
+
+
+
 export function Personnel({ user }: { user: any }) {
   const [personnel, setPersonnel] = useState<Personnel[]>([])
   const [filteredPersonnel, setFilteredPersonnel] = useState<Personnel[]>([])
@@ -30,9 +46,11 @@ export function Personnel({ user }: { user: any }) {
   const [showOnlyWithBalance, setShowOnlyWithBalance] = useState(false)
   const [isDialogOpen, setIsDialogOpen] = useState(false)
   const [editingPersonnel, setEditingPersonnel] = useState<Personnel | null>(null)
-  const [detailDialogOpen, setDetailDialogOpen] = useState(false)
-  const [selectedPersonnel, setSelectedPersonnel] = useState<Personnel | null>(null)
-  const [personnelHistory, setPersonnelHistory] = useState<any[]>([])
+  
+  // Detail view states
+  const [viewingPersonnel, setViewingPersonnel] = useState<Personnel | null>(null)
+  const [personnelWorkOrders, setPersonnelWorkOrders] = useState<WorkOrder[]>([])
+  const [loadingDetails, setLoadingDetails] = useState(false)
 
   const [formData, setFormData] = useState({
     name: '',
@@ -60,6 +78,40 @@ export function Personnel({ user }: { user: any }) {
       console.error('Error loading personnel:', error)
     } finally {
       setLoading(false)
+    }
+  }
+
+  const loadPersonnelDetails = async (person: Personnel) => {
+    setViewingPersonnel(person)
+    setLoadingDetails(true)
+    
+    try {
+      // Load all work orders
+      const workOrdersResult = await apiCall('/work-orders')
+      const allWorkOrders = workOrdersResult.workOrders || []
+      
+      // Load all customers to get names
+      const customersResult = await apiCall('/customers')
+      const customers = customersResult.customers || []
+      
+      // Filter work orders where this personnel was assigned
+      const personnelOrders = allWorkOrders
+        .filter((wo: WorkOrder) => wo.personnelIds && wo.personnelIds.includes(person.id))
+        .map((wo: WorkOrder) => {
+          const customer = customers.find((c: any) => c.id === wo.customerId)
+          return {
+            ...wo,
+            customerName: customer?.name || 'Bilinmeyen Müşteri'
+          }
+        })
+        .sort((a: WorkOrder, b: WorkOrder) => new Date(b.date).getTime() - new Date(a.date).getTime())
+      
+      setPersonnelWorkOrders(personnelOrders)
+    } catch (error) {
+      console.error('Error loading personnel details:', error)
+      toast.error('Personel detayları yüklenirken hata oluştu')
+    } finally {
+      setLoadingDetails(false)
     }
   }
 
@@ -105,11 +157,13 @@ export function Personnel({ user }: { user: any }) {
           method: 'PUT',
           body: JSON.stringify(payload)
         })
+        toast.success('Personel güncellendi!')
       } else {
         await apiCall('/personnel', {
           method: 'POST',
           body: JSON.stringify(payload)
         })
+        toast.success('Personel eklendi!')
       }
 
       setIsDialogOpen(false)
@@ -117,7 +171,7 @@ export function Personnel({ user }: { user: any }) {
       loadPersonnel()
     } catch (error) {
       console.error('Error saving personnel:', error)
-      alert('Personel kaydedilirken hata oluştu')
+      toast.error('Personel kaydedilirken hata oluştu')
     }
   }
 
@@ -139,9 +193,10 @@ export function Personnel({ user }: { user: any }) {
         body: JSON.stringify({ active: !person.active })
       })
       loadPersonnel()
+      toast.success(`${person.name} ${!person.active ? 'aktif' : 'pasif'} edildi`)
     } catch (error) {
       console.error('Error updating personnel:', error)
-      alert('Personel durumu güncellenirken hata oluştu')
+      toast.error('Personel durumu güncellenirken hata oluştu')
     }
   }
 
@@ -153,9 +208,10 @@ export function Personnel({ user }: { user: any }) {
     try {
       await apiCall(`/personnel/${personnelId}`, { method: 'DELETE' })
       loadPersonnel()
+      toast.success('Personel silindi!')
     } catch (error) {
       console.error('Error deleting personnel:', error)
-      alert('Personel silinirken hata oluştu')
+      toast.error('Personel silinirken hata oluştu')
     }
   }
 
@@ -169,20 +225,6 @@ export function Personnel({ user }: { user: any }) {
     setEditingPersonnel(null)
   }
 
-  const handleViewDetails = async (person: Personnel) => {
-    setSelectedPersonnel(person)
-    setDetailDialogOpen(true)
-    
-    // Load work history for this personnel
-    try {
-      const result = await apiCall(`/personnel/${person.id}/history`)
-      setPersonnelHistory(result.history || [])
-    } catch (error) {
-      console.error('Error loading personnel history:', error)
-      setPersonnelHistory([])
-    }
-  }
-
   const handleCleanupPayroll = async () => {
     if (!confirm('Silinmiş personellere ait yevmiye kayıtlarını temizlemek istediğinize emin misiniz?')) {
       return
@@ -190,18 +232,203 @@ export function Personnel({ user }: { user: any }) {
 
     try {
       const result = await apiCall('/personnel/cleanup-payroll', { method: 'POST' })
-      alert(result.message || `${result.deletedCount} kayıt temizlendi`)
-      loadPersonnel() // Reload to refresh balances
+      toast.success(result.message || `${result.deletedCount} kayıt temizlendi`)
+      loadPersonnel()
     } catch (error) {
       console.error('Error cleaning payroll records:', error)
-      alert('Temizleme işlemi sırasında hata oluştu')
+      toast.error('Temizleme işlemi sırasında hata oluştu')
     }
+  }
+
+  const formatCurrency = (amount: number) => {
+    return new Intl.NumberFormat('tr-TR', {
+      style: 'currency',
+      currency: 'TRY',
+      minimumFractionDigits: 2
+    }).format(amount || 0)
+  }
+
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('tr-TR', {
+      day: 'numeric',
+      month: 'long',
+      year: 'numeric'
+    })
+  }
+
+  const getStatusBadge = (status: string) => {
+    switch (status) {
+      case 'draft':
+        return <Badge variant="outline" className="bg-yellow-100 text-yellow-800"><Clock className="h-3 w-3 mr-1" />Taslak</Badge>
+      case 'approved':
+        return <Badge className="bg-blue-100 text-blue-800"><CheckCircle className="h-3 w-3 mr-1" />Onaylandı</Badge>
+      case 'completed':
+        return <Badge className="bg-green-100 text-green-800"><CheckCircle className="h-3 w-3 mr-1" />Tamamlandı</Badge>
+      default:
+        return <Badge variant="secondary">{status}</Badge>
+    }
+  }
+
+
+
+  // Calculate total amount to be paid to all personnel
+  const calculateTotalPayable = () => {
+    return personnel.reduce((sum, person) => {
+      const balance = person.totalBalance || 0
+      return sum + (balance > 0 ? balance : 0) // Only positive balances (what we owe them)
+    }, 0)
   }
 
   if (loading) {
     return <div className="flex items-center justify-center h-64">Yükleniyor...</div>
   }
 
+  // Personnel Detail View
+  if (viewingPersonnel) {
+    return (
+      <div className="space-y-6">
+        {/* Header */}
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-4">
+            <Button variant="outline" onClick={() => setViewingPersonnel(null)}>
+              <X className="h-4 w-4 mr-2" />
+              Geri
+            </Button>
+            <div>
+              <h1>{viewingPersonnel.name}</h1>
+              <p className="text-gray-500">{viewingPersonnel.role}</p>
+            </div>
+          </div>
+          <div className="text-right">
+            <div className="text-sm text-gray-500">Toplam Bakiye</div>
+            <div className={`text-2xl font-bold ${
+              (viewingPersonnel.totalBalance || 0) > 0 
+                ? 'text-red-600' 
+                : (viewingPersonnel.totalBalance || 0) < 0 
+                  ? 'text-green-600' 
+                  : 'text-gray-600'
+            }`}>
+              {formatCurrency(viewingPersonnel.totalBalance || 0)}
+            </div>
+          </div>
+        </div>
+
+        {/* Personnel Info Card */}
+        <Card>
+          <CardHeader>
+            <CardTitle>Personel Bilgileri</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
+              <div>
+                <div className="text-sm text-gray-500">Telefon</div>
+                <div className="font-medium">{viewingPersonnel.contactInfo?.phone || '-'}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">Durum</div>
+                {viewingPersonnel.active ? (
+                  <Badge className="bg-green-100 text-green-800">Aktif</Badge>
+                ) : (
+                  <Badge variant="secondary">Pasif</Badge>
+                )}
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">Kayıt Tarihi</div>
+                <div className="font-medium">
+                  {new Date(viewingPersonnel.createdAt).toLocaleDateString('tr-TR')}
+                </div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">Toplam İş</div>
+                <div className="font-medium text-lg">{personnelWorkOrders.length}</div>
+              </div>
+            </div>
+            {viewingPersonnel.notes && (
+              <div className="mt-4 pt-4 border-t">
+                <div className="text-sm text-gray-500">Notlar</div>
+                <p className="mt-1">{viewingPersonnel.notes}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+
+        {/* Work Orders List */}
+        <Card>
+          <CardHeader>
+            <CardTitle className="flex items-center gap-2">
+              <Calendar className="h-5 w-5" />
+              Çalıştığı İşler ({personnelWorkOrders.length} adet)
+            </CardTitle>
+          </CardHeader>
+          <CardContent>
+            {loadingDetails ? (
+              <div className="text-center py-8 text-gray-500">Yükleniyor...</div>
+            ) : personnelWorkOrders.length === 0 ? (
+              <div className="text-center py-8 text-gray-500">
+                Bu personel için henüz iş kaydı bulunmuyor
+              </div>
+            ) : (
+              <div className="space-y-4">
+                {personnelWorkOrders.map((workOrder) => {
+                  const earned = workOrder.personnelPayments?.[viewingPersonnel.id] || 0
+                  
+                  return (
+                    <div key={workOrder.id} className="border rounded-lg p-4 space-y-3">
+                      {/* Header */}
+                      <div className="flex items-start justify-between">
+                        <div className="flex items-center gap-3">
+                          <Calendar className="h-5 w-5 text-gray-600" />
+                          <div>
+                            <div className="font-medium">{workOrder.customerName}</div>
+                            <div className="text-sm text-gray-500">
+                              {formatDate(workOrder.date)} • {new Date(workOrder.date).toLocaleTimeString('tr-TR', { 
+                                hour: '2-digit', 
+                                minute: '2-digit' 
+                              })}
+                            </div>
+                          </div>
+                        </div>
+                        {getStatusBadge(workOrder.status)}
+                      </div>
+
+                      {/* Description */}
+                      {workOrder.description && (
+                        <p className="text-sm text-gray-700">{workOrder.description}</p>
+                      )}
+
+                      {/* Financial Info - Personnel Specific */}
+                      <div className="grid grid-cols-2 gap-4 p-3 bg-gray-50 rounded-lg">
+                        <div>
+                          <div className="text-xs text-gray-500">Hakediş (Bu İşten Kazanılan)</div>
+                          <div className="font-bold text-lg text-blue-600">{formatCurrency(earned)}</div>
+                        </div>
+                        <div>
+                          <div className="text-xs text-gray-500">Toplam İş Tutarı</div>
+                          <div className="font-bold text-lg text-gray-600">{formatCurrency(workOrder.totalAmount)}</div>
+                        </div>
+                      </div>
+
+                      {/* Payment tracking note */}
+                      {earned > 0 && (
+                        <div className="pt-3 border-t">
+                          <div className="text-sm text-blue-700 bg-blue-50 p-2 rounded">
+                            💡 Ödemeler "Personel Bordroları" sayfasından günlük bazda takip edilmektedir.
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )
+                })}
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      </div>
+    )
+  }
+
+  // Main Personnel List View
   return (
     <div className="space-y-6">
       <div className="flex items-center justify-between">
@@ -379,9 +606,10 @@ export function Personnel({ user }: { user: any }) {
                             <Button
                               variant="outline"
                               size="sm"
-                              onClick={() => handleViewDetails(person)}
+                              onClick={() => loadPersonnelDetails(person)}
                             >
-                              <Eye className="h-4 w-4" />
+                              <Eye className="h-4 w-4 mr-1" />
+                              Detay
                             </Button>
                             {canEdit && (
                               <>
@@ -426,71 +654,32 @@ export function Personnel({ user }: { user: any }) {
         </CardContent>
       </Card>
 
-      {/* Personnel Detail Dialog */}
-      <Dialog open={detailDialogOpen} onOpenChange={setDetailDialogOpen}>
-        <DialogContent className="max-w-3xl">
-          <DialogHeader>
-            <DialogTitle>{selectedPersonnel?.name} - İş Geçmişi</DialogTitle>
-          </DialogHeader>
-          <div className="space-y-4">
-            <div className="grid grid-cols-2 gap-4 p-4 bg-gray-50 rounded-lg">
-              <div>
-                <p className="text-sm text-gray-500">Rol</p>
-                <p>{selectedPersonnel?.role}</p>
+      {/* Total Payables Summary */}
+      <Card className="border-2 border-red-200 bg-red-50">
+        <CardContent className="pt-6">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-3">
+              <div className="p-3 bg-red-100 rounded-full">
+                <TrendingUp className="h-6 w-6 text-red-600" />
               </div>
               <div>
-                <p className="text-sm text-gray-500">Telefon</p>
-                <p>{selectedPersonnel?.contactInfo?.phone || '-'}</p>
-              </div>
-              <div className="col-span-2">
-                <p className="text-sm text-gray-500">Notlar</p>
-                <p>{selectedPersonnel?.notes || '-'}</p>
+                <h3 className="font-medium text-red-900">Toplam Verilecekler</h3>
+                <p className="text-sm text-red-700">
+                  Tüm personellere ödenmesi gereken toplam tutar
+                </p>
               </div>
             </div>
-
-            <div>
-              <h3 className="mb-3">Çalıştığı İşler</h3>
-              {personnelHistory.length === 0 ? (
-                <p className="text-center text-gray-500 py-8">İş geçmişi bulunamadı</p>
-              ) : (
-                <div className="space-y-2 max-h-96 overflow-y-auto">
-                  {personnelHistory.map((work: any) => (
-                    <Card key={work.id}>
-                      <CardContent className="pt-4">
-                        <div className="flex items-start justify-between">
-                          <div className="flex-1">
-                            <div className="flex items-center gap-2">
-                              <h4>{work.customerName}</h4>
-                              <Badge variant="outline" className={
-                                work.status === 'completed' ? 'bg-green-100 text-green-800' :
-                                work.status === 'approved' ? 'bg-blue-100 text-blue-800' :
-                                'bg-yellow-100 text-yellow-800'
-                              }>
-                                {work.status === 'completed' ? 'Tamamlandı' :
-                                 work.status === 'approved' ? 'Onaylandı' : 'Taslak'}
-                              </Badge>
-                            </div>
-                            <p className="text-sm text-gray-500 mt-1">
-                              {new Date(work.date).toLocaleDateString('tr-TR')}
-                            </p>
-                            {work.description && (
-                              <p className="text-sm text-gray-600 mt-1">{work.description}</p>
-                            )}
-                          </div>
-                          <div className="text-right">
-                            <p className="text-sm text-gray-500">Tutar</p>
-                            <p>{work.totalAmount ? `${work.totalAmount.toFixed(2)} TL` : '-'}</p>
-                          </div>
-                        </div>
-                      </CardContent>
-                    </Card>
-                  ))}
-                </div>
-              )}
+            <div className="text-right">
+              <div className="text-3xl font-bold text-red-600">
+                {formatCurrency(calculateTotalPayable())}
+              </div>
+              <div className="text-sm text-red-700">
+                {personnel.filter(p => (p.totalBalance || 0) > 0).length} personel
+              </div>
             </div>
           </div>
-        </DialogContent>
-      </Dialog>
+        </CardContent>
+      </Card>
     </div>
   )
 }

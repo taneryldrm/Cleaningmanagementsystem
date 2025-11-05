@@ -15,7 +15,9 @@ import { Finance } from './components/Finance'
 import { UserManagement } from './components/UserManagement'
 import { Analytics } from './components/Analytics'
 import { PendingCollections } from './components/PendingCollections'
+import { MobileMenuGrid } from './components/MobileMenuGrid'
 import { Button } from './components/ui/button'
+import { useIsMobile } from './components/ui/use-mobile'
 import { 
   LayoutDashboard, 
   Users, 
@@ -33,7 +35,9 @@ import {
   DollarSign,
   SearchCheck,
   BarChart3,
-  AlertCircle
+  AlertCircle,
+  Grid3x3,
+  ArrowLeft
 } from 'lucide-react'
 
 type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'pending-collections' | 'users'
@@ -44,10 +48,28 @@ export default function App() {
   const [needsSetup, setNeedsSetup] = useState(false)
   const [currentPage, setCurrentPage] = useState<Page>('dashboard')
   const [isMobileMenuOpen, setIsMobileMenuOpen] = useState(false)
+  const [showMobileMenuGrid, setShowMobileMenuGrid] = useState(true)
+  const [serverStatus, setServerStatus] = useState<'checking' | 'ready' | 'error'>('checking')
+  const isMobile = useIsMobile()
 
   useEffect(() => {
-    checkUser()
+    checkServerHealth()
   }, [])
+
+  const checkServerHealth = async () => {
+    try {
+      await apiCall('/health', { skipAuth: true })
+      setServerStatus('ready')
+      checkUser()
+    } catch (error) {
+      console.error('Server health check failed:', error)
+      setServerStatus('error')
+      // Still try to check user after a delay
+      setTimeout(() => {
+        checkUser()
+      }, 2000)
+    }
+  }
 
   const checkUser = async () => {
     try {
@@ -100,8 +122,21 @@ export default function App() {
 
   if (loading) {
     return (
-      <div className="min-h-screen flex items-center justify-center">
-        <p className="text-gray-500">Yükleniyor...</p>
+      <div className="min-h-screen flex items-center justify-center bg-gray-50">
+        <div className="text-center space-y-4">
+          <div className="animate-pulse">
+            <div className="text-2xl mb-2">⏳</div>
+            <p className="text-gray-700">Yükleniyor...</p>
+            {serverStatus === 'checking' && (
+              <p className="text-sm text-gray-500 mt-2">Sunucu bağlantısı kontrol ediliyor...</p>
+            )}
+            {serverStatus === 'error' && (
+              <p className="text-sm text-amber-600 mt-2">
+                Sunucu başlatılıyor, lütfen bekleyin...
+              </p>
+            )}
+          </div>
+        </div>
       </div>
     )
   }
@@ -116,6 +151,22 @@ export default function App() {
 
   const role = user?.user_metadata?.role
   const userName = user?.user_metadata?.name || 'Kullanıcı'
+
+  // Handle mobile menu grid navigation
+  const handleMobileNavigate = (page: Page) => {
+    setCurrentPage(page)
+    setShowMobileMenuGrid(false)
+    setIsMobileMenuOpen(false)
+    // Scroll to top when navigating
+    window.scrollTo(0, 0)
+  }
+
+  const handleBackToMobileMenu = () => {
+    setShowMobileMenuGrid(true)
+    setIsMobileMenuOpen(false)
+    // Scroll to top when returning to menu
+    window.scrollTo(0, 0)
+  }
 
   const menuItems = [
     { id: 'dashboard' as Page, label: 'Dashboard', icon: LayoutDashboard, roles: ['admin', 'secretary', 'driver', 'cleaner'] },
@@ -170,21 +221,34 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-gray-50">
-      {/* Header */}
-      <header className="bg-white border-b sticky top-0 z-40">
+      {/* Header - Hidden on mobile when showing grid menu */}
+      {!(isMobile && showMobileMenuGrid) && (
+        <header className="bg-white border-b sticky top-0 z-40">
         <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8">
           <div className="flex items-center justify-between h-16">
-            <div className="flex items-center gap-4">
-              <button
-                onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
-                className="lg:hidden p-2 rounded-md hover:bg-gray-100"
-              >
-                {isMobileMenuOpen ? (
-                  <X className="h-6 w-6" />
-                ) : (
-                  <Menu className="h-6 w-6" />
-                )}
-              </button>
+            <div className="flex items-center gap-2">
+              {/* Mobile: Show back button when not on grid menu */}
+              {isMobile && !showMobileMenuGrid ? (
+                <button
+                  onClick={handleBackToMobileMenu}
+                  className="p-2 rounded-md hover:bg-gray-100 active:bg-gray-200 transition-colors"
+                  title="Ana Menüye Dön"
+                >
+                  <ArrowLeft className="h-6 w-6 text-gray-700" />
+                </button>
+              ) : !isMobile && !showMobileMenuGrid && (
+                /* Desktop: Show hamburger menu */
+                <button
+                  onClick={() => setIsMobileMenuOpen(!isMobileMenuOpen)}
+                  className="lg:hidden p-2 rounded-md hover:bg-gray-100"
+                >
+                  {isMobileMenuOpen ? (
+                    <X className="h-6 w-6" />
+                  ) : (
+                    <Menu className="h-6 w-6" />
+                  )}
+                </button>
+              )}
               <div>
                 <h1 className="text-xl">Uçanlar Temizlik</h1>
                 <p className="text-xs text-gray-500">İş Yönetim Sistemi</p>
@@ -208,8 +272,9 @@ export default function App() {
           </div>
         </div>
       </header>
+      )}
 
-      <div className="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8">
+      <div className={isMobile && showMobileMenuGrid ? "" : "max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 py-8"}>
         <div className="flex gap-8">
           {/* Desktop Sidebar */}
           <aside className="hidden lg:block w-64 flex-shrink-0">
@@ -219,7 +284,10 @@ export default function App() {
                 return (
                   <button
                     key={item.id}
-                    onClick={() => setCurrentPage(item.id)}
+                    onClick={() => {
+                      setCurrentPage(item.id)
+                      window.scrollTo(0, 0)
+                    }}
                     className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${
                       currentPage === item.id
                         ? 'bg-blue-50 text-blue-700'
@@ -253,6 +321,7 @@ export default function App() {
                         onClick={() => {
                           setCurrentPage(item.id)
                           setIsMobileMenuOpen(false)
+                          window.scrollTo(0, 0)
                         }}
                         className={`w-full flex items-center gap-3 px-4 py-3 rounded-lg text-left transition-colors ${
                           currentPage === item.id
@@ -272,7 +341,15 @@ export default function App() {
 
           {/* Main Content */}
           <main className="flex-1 min-w-0">
-            {renderPage()}
+            {isMobile && showMobileMenuGrid ? (
+              <MobileMenuGrid 
+                role={role} 
+                userName={userName} 
+                onNavigate={handleMobileNavigate}
+              />
+            ) : (
+              renderPage()
+            )}
           </main>
         </div>
       </div>

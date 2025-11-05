@@ -75,38 +75,47 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
       const today = new Date()
       const next10Days: DailyPersonnelCount[] = []
       
-      const workOrdersResult = await apiCall('/work-orders')
-      const workOrders = workOrdersResult.workOrders || []
-      
-      for (let i = 0; i < 10; i++) {
-        const date = new Date(today)
-        date.setDate(date.getDate() + i)
-        const dateStr = date.toISOString().split('T')[0]
+      try {
+        const workOrdersResult = await apiCall('/work-orders')
+        const workOrders = workOrdersResult.workOrders || []
         
-        const dayWorkOrders = workOrders.filter((wo: any) => {
-          return wo.date?.startsWith(dateStr) && 
-                 (wo.status === 'draft' || wo.status === 'approved' || wo.status === 'completed')
-        })
-        
-        // Count unique personnel
-        const uniquePersonnel = new Set<string>()
-        dayWorkOrders.forEach((wo: any) => {
-          if (wo.personnelIds && Array.isArray(wo.personnelIds)) {
-            wo.personnelIds.forEach((id: string) => uniquePersonnel.add(id))
-          }
-        })
-        
-        next10Days.push({
-          date: dateStr,
+        for (let i = 0; i < 10; i++) {
+          const date = new Date(today)
+          date.setDate(date.getDate() + i)
+          const dateStr = date.toISOString().split('T')[0]
+          
+          const dayWorkOrders = workOrders.filter((wo: any) => {
+            return wo.date?.startsWith(dateStr) && 
+                   (wo.status === 'draft' || wo.status === 'approved' || wo.status === 'completed')
+          })
+          
+          // Count unique personnel
+          const uniquePersonnel = new Set<string>()
+          dayWorkOrders.forEach((wo: any) => {
+            if (wo.personnelIds && Array.isArray(wo.personnelIds)) {
+              wo.personnelIds.forEach((id: string) => uniquePersonnel.add(id))
+            }
+          })
+          
+          next10Days.push({
+            date: dateStr,
           count: uniquePersonnel.size,
           workOrders: dayWorkOrders
         })
       }
       
-      setDailyPersonnel(next10Days)
+        setDailyPersonnel(next10Days)
+      } catch (workOrderError) {
+        console.error('Error loading work orders:', workOrderError)
+        // Don't show error toast, just leave empty
+      }
     } catch (error) {
       console.error('Error loading dashboard data:', error)
-      toast.error('Dashboard verileri yüklenirken hata oluştu')
+      if (error instanceof Error) {
+        toast.error(error.message)
+      } else {
+        toast.error('Dashboard verileri yüklenirken hata oluştu')
+      }
     } finally {
       setLoading(false)
     }
@@ -244,7 +253,10 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
   if (loading) {
     return (
       <div className="flex items-center justify-center h-64">
-        <p className="text-gray-500">Yükleniyor...</p>
+        <div className="text-center space-y-2">
+          <div className="animate-pulse text-2xl">📊</div>
+          <p className="text-gray-500">Dashboard yükleniyor...</p>
+        </div>
       </div>
     )
   }
@@ -262,12 +274,14 @@ export function Dashboard({ user, onNavigate }: DashboardProps) {
             {userRole === 'cleaner' && 'Temizlikçi Paneli'}
           </p>
         </div>
-        {(userRole === 'admin' || userRole === 'secretary') && (
-          <Button onClick={() => onNavigate?.('work-orders')}>
-            <Plus className="h-4 w-4 mr-2" />
-            Yeni İş Emri Oluştur
-          </Button>
-        )}
+        <div className="flex gap-2">
+          {(userRole === 'admin' || userRole === 'secretary') && (
+            <Button onClick={() => onNavigate?.('work-orders')}>
+              <Plus className="h-4 w-4 mr-2" />
+              Yeni İş Emri Oluştur
+            </Button>
+          )}
+        </div>
       </div>
 
       {/* Pending Collections Alert - Admin & Secretary Only */}

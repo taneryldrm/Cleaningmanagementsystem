@@ -55,7 +55,11 @@ export function PendingCollections({ user }: { user: any }) {
       setCustomerDebts(response.customerDebts || [])
     } catch (error) {
       console.error('Error loading pending collections:', error)
-      alert('Bekleyen tahsilatlar yüklenirken hata oluştu')
+      if (error instanceof Error) {
+        alert(error.message)
+      } else {
+        alert('Bekleyen tahsilatlar yüklenirken hata oluştu. Lütfen sayfayı yenileyin.')
+      }
     } finally {
       setLoading(false)
     }
@@ -151,7 +155,14 @@ export function PendingCollections({ user }: { user: any }) {
   const totalWorkOrders = filteredDebts.reduce((sum, debt) => sum + debt.workOrders.length, 0)
 
   if (loading) {
-    return <div className="flex items-center justify-center h-64">Yükleniyor...</div>
+    return (
+      <div className="flex items-center justify-center h-64">
+        <div className="text-center space-y-2">
+          <div className="animate-pulse text-2xl">💰</div>
+          <p className="text-gray-500">Bekleyen tahsilatlar yükleniyor...</p>
+        </div>
+      </div>
+    )
   }
 
   return (

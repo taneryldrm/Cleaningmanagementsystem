@@ -37,6 +37,7 @@ export function WorkOrders({ user }: { user: any }) {
   const [editingOrder, setEditingOrder] = useState<WorkOrder | null>(null)
   const [searchQuery, setSearchQuery] = useState('')
   const [showNewCustomerForm, setShowNewCustomerForm] = useState(false)
+  const [customerSearchLoading, setCustomerSearchLoading] = useState(false)
   const [newCustomerData, setNewCustomerData] = useState({
     name: '',
     phone: '',
@@ -72,15 +73,22 @@ export function WorkOrders({ user }: { user: any }) {
 
   const loadData = async () => {
     try {
-      const [workOrdersResult, customersResult, personnelResult] = await Promise.all([
-        apiCall('/work-orders'),
-        apiCall('/customers'),
+      // Load work orders with date filter for performance (±30 days)
+      // Load only personnel initially - customers loaded on demand when searching
+      const [workOrdersResult, personnelResult] = await Promise.all([
+        apiCall(`/work-orders?date=${selectedDate}`),
         apiCall('/personnel')
       ])
       
       setWorkOrders(workOrdersResult.workOrders || [])
-      setCustomers(customersResult.customers || [])
       setPersonnel(personnelResult.personnel?.filter((p: any) => p.active) || [])
+      
+      // Load customers only if needed (for displaying existing work orders)
+      const customerIds = [...new Set((workOrdersResult.workOrders || []).map((wo: WorkOrder) => wo.customerId))]
+      if (customerIds.length > 0) {
+        const customersResult = await apiCall('/customers')
+        setCustomers(customersResult.customers || [])
+      }
     } catch (error) {
       console.error('Error loading data:', error)
     } finally {
@@ -345,6 +353,9 @@ export function WorkOrders({ user }: { user: any }) {
   }
 
   const filteredCustomers = customers.filter(customer => {
+    // Don't show any customers if search is empty
+    if (searchQuery.trim() === '') return false
+    
     const query = searchQuery.toLowerCase()
     const nameMatch = customer.name?.toLowerCase().includes(query)
     const phoneMatch = customer.contactInfo?.phone?.includes(query)
@@ -463,15 +474,6 @@ export function WorkOrders({ user }: { user: any }) {
                       <Label>Müşteri *</Label>
                       {!showNewCustomerForm ? (
                         <div className="space-y-2">
-                          <div className="relative">
-                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                            <Input
-                              placeholder="Müşteri adı veya telefon numarası ile ara..."
-                              value={searchQuery}
-                              onChange={(e) => setSearchQuery(e.target.value)}
-                              className="pl-10"
-                            />
-                          </div>
                           <Select 
                             value={formData.customerId}
                             onValueChange={(value) => {
@@ -485,23 +487,47 @@ export function WorkOrders({ user }: { user: any }) {
                                   customerAddress: selectedCustomer.address || '' 
                                 }))
                               }
+                              // Clear search after selection
+                              setSearchQuery('')
                             }}
                           >
                             <SelectTrigger>
                               <SelectValue placeholder="Müşteri seçin" />
                             </SelectTrigger>
                             <SelectContent>
-                              {filteredCustomers.length > 0 ? (
-                                filteredCustomers.map(customer => (
-                                  <SelectItem key={customer.id} value={customer.id}>
-                                    {customer.name} {customer.contactInfo?.phone && `(${customer.contactInfo.phone})`}
-                                  </SelectItem>
-                                ))
-                              ) : (
-                                <SelectItem value="no-results" disabled>
-                                  Sonuç bulunamadı
-                                </SelectItem>
-                              )}
+                              {/* Search Input inside dropdown */}
+                              <div className="sticky top-0 z-10 bg-white p-2 border-b">
+                                <div className="relative">
+                                  <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                                  <Input
+                                    placeholder="Müşteri adı veya telefon numarası ile ara..."
+                                    value={searchQuery}
+                                    onChange={(e) => setSearchQuery(e.target.value)}
+                                    onClick={(e) => e.stopPropagation()}
+                                    onKeyDown={(e) => e.stopPropagation()}
+                                    className="pl-10 h-9"
+                                  />
+                                </div>
+                              </div>
+                              
+                              {/* Customer List */}
+                              <div className="max-h-[300px] overflow-y-auto">
+                                {searchQuery.trim() === '' ? (
+                                  <div className="p-4 text-center text-sm text-gray-500">
+                                    Aramak için müşteri adı veya telefon giriniz
+                                  </div>
+                                ) : filteredCustomers.length > 0 ? (
+                                  filteredCustomers.map((customer, index) => (
+                                    <SelectItem key={`customer:${customer.id}:${index}`} value={customer.id}>
+                                      {customer.name} {customer.contactInfo?.phone && `(${customer.contactInfo.phone})`}
+                                    </SelectItem>
+                                  ))
+                                ) : (
+                                  <div className="p-4 text-center text-sm text-gray-500">
+                                    Sonuç bulunamadı
+                                  </div>
+                                )}
+                              </div>
                             </SelectContent>
                           </Select>
                           <Button

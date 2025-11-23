@@ -164,9 +164,30 @@ app.get('/make-server-882c4243/customers', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
+    // Get query parameters for search
+    const url = new URL(c.req.url)
+    const searchQuery = url.searchParams.get('search')
+    const limit = parseInt(url.searchParams.get('limit') || '0')
+
     // Use getAllByPrefix to bypass 1000 record limit
-    const customers = await getAllByPrefix('customer:')
-    return c.json({ customers })
+    let customers = await getAllByPrefix('customer:')
+
+    // Apply search filter if provided
+    if (searchQuery && searchQuery.trim()) {
+      const query = searchQuery.toLowerCase()
+      customers = customers.filter((customer: any) => {
+        const nameMatch = customer.name?.toLowerCase().includes(query)
+        const phoneMatch = customer.contactInfo?.phone?.includes(query)
+        return nameMatch || phoneMatch
+      })
+    }
+
+    // Apply limit if provided (for dropdown performance)
+    if (limit > 0) {
+      customers = customers.slice(0, limit)
+    }
+
+    return c.json({ customers, total: customers.length })
   } catch (error) {
     console.log('Server error fetching customers:', error)
     return c.json({ error: String(error) }, 500)
@@ -644,6 +665,10 @@ app.get('/make-server-882c4243/work-orders', async (c) => {
       console.log('Background auto-approve error:', err)
     )
 
+    // Get query parameters for date filtering
+    const url = new URL(c.req.url)
+    const dateOnly = url.searchParams.get('date') // Single date filter
+
     // Use getAllByPrefix to bypass 1000 record limit
     const workOrders = await getAllByPrefix('workorder:')
     
@@ -656,6 +681,21 @@ app.get('/make-server-882c4243/work-orders', async (c) => {
       filtered = workOrders.filter((wo: any) => 
         wo.personnelIds && wo.personnelIds.includes(user.id)
       )
+    }
+
+    // Apply date filtering if provided (±30 days for performance)
+    if (dateOnly) {
+      const targetDate = new Date(dateOnly)
+      const before = new Date(targetDate)
+      before.setDate(before.getDate() - 30)
+      const after = new Date(targetDate)
+      after.setDate(after.getDate() + 30)
+      
+      filtered = filtered.filter((wo: any) => {
+        if (!wo.date) return false
+        const woDate = new Date(wo.date)
+        return woDate >= before && woDate <= after
+      })
     }
 
     return c.json({ workOrders: filtered })
@@ -1723,10 +1763,60 @@ app.get('/make-server-882c4243/transactions', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    const transactions = await getAllByPrefix('transaction:')
-    return c.json({ transactions })
+    // Get pagination parameters
+    const offset = parseInt(c.req.query('offset') || '0')
+    const limit = parseInt(c.req.query('limit') || '30')
+
+    const allTransactions = await getAllByPrefix('transaction:')
+    
+    // Sort by date (newest first)
+    const sortedTransactions = allTransactions.sort((a: any, b: any) => {
+      return new Date(b.date).getTime() - new Date(a.date).getTime()
+    })
+    
+    // Apply pagination
+    const paginatedTransactions = sortedTransactions.slice(offset, offset + limit)
+    const hasMore = offset + limit < sortedTransactions.length
+    
+    return c.json({ 
+      transactions: paginatedTransactions,
+      hasMore,
+      total: sortedTransactions.length 
+    })
   } catch (error) {
     console.log('Server error fetching transactions:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
+// Get transaction summary (totals)
+app.get('/make-server-882c4243/transactions/summary', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    const allTransactions = await getAllByPrefix('transaction:')
+    
+    const totalIncome = allTransactions
+      .filter((t: any) => t.type === 'income')
+      .reduce((sum: number, t: any) => sum + t.amount, 0)
+    
+    const totalExpense = allTransactions
+      .filter((t: any) => t.type === 'expense')
+      .reduce((sum: number, t: any) => sum + t.amount, 0)
+    
+    const balance = totalIncome - totalExpense
+    
+    return c.json({ 
+      totalIncome,
+      totalExpense,
+      balance,
+      count: allTransactions.length
+    })
+  } catch (error) {
+    console.log('Server error fetching transaction summary:', error)
     return c.json({ error: String(error) }, 500)
   }
 })

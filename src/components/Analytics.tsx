@@ -42,11 +42,6 @@ interface AnalyticsData {
     totalRevenue: number
     workCount: number
   }>
-  personnelPerformance: Array<{
-    personnelName: string
-    workCount: number
-    totalRevenue: number
-  }>
   serviceBreakdown: Array<{
     category: string
     count: number
@@ -266,7 +261,6 @@ export function Analytics({ user }: { user: any }) {
         <TabsList>
           <TabsTrigger value="overview">Genel Bakış</TabsTrigger>
           <TabsTrigger value="customers">Müşteri Analizi</TabsTrigger>
-          <TabsTrigger value="personnel">Personel Performansı</TabsTrigger>
           <TabsTrigger value="collections">Tahsilat Analizi</TabsTrigger>
         </TabsList>
 
@@ -430,90 +424,6 @@ export function Analytics({ user }: { user: any }) {
               </CardContent>
             </Card>
           </div>
-        </TabsContent>
-
-        {/* Personel Performansı Tab */}
-        <TabsContent value="personnel" className="space-y-4">
-          <div className="grid gap-4 md:grid-cols-2">
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Personel İş Sayıları</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => exportToCSV(data.personnelPerformance, 'personel_performans')}
-                >
-                  <Download className="h-4 w-4" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.personnelPerformance}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="personnelName" />
-                    <YAxis />
-                    <Tooltip />
-                    <Legend />
-                    <Bar dataKey="workCount" fill="#8b5cf6" name="İş Sayısı" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-
-            <Card>
-              <CardHeader className="flex flex-row items-center justify-between">
-                <CardTitle>Personel Gelir Katkısı</CardTitle>
-                <Button
-                  variant="ghost"
-                  size="sm"
-                  onClick={() => exportToCSV(data.personnelPerformance, 'personel_gelir')}
-                >
-                  <Download className="h-4 w-4" />
-                </Button>
-              </CardHeader>
-              <CardContent>
-                <ResponsiveContainer width="100%" height={300}>
-                  <BarChart data={data.personnelPerformance}>
-                    <CartesianGrid strokeDasharray="3 3" />
-                    <XAxis dataKey="personnelName" />
-                    <YAxis />
-                    <Tooltip formatter={(value) => formatCurrency(Number(value))} />
-                    <Legend />
-                    <Bar dataKey="totalRevenue" fill="#10b981" name="Toplam Gelir" />
-                  </BarChart>
-                </ResponsiveContainer>
-              </CardContent>
-            </Card>
-          </div>
-
-          <Card>
-            <CardHeader>
-              <CardTitle>Personel Detay Listesi</CardTitle>
-            </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {data.personnelPerformance.map((personnel, index) => (
-                  <div key={index} className="flex items-center justify-between p-3 bg-gray-50 rounded hover:bg-gray-100">
-                    <div className="flex items-center gap-3">
-                      <div className="bg-purple-100 text-purple-700 rounded-full w-10 h-10 flex items-center justify-center">
-                        <Users className="h-5 w-5" />
-                      </div>
-                      <div>
-                        <div className="font-medium">{personnel.personnelName}</div>
-                        <div className="text-xs text-gray-500">{personnel.workCount} iş tamamlandı</div>
-                      </div>
-                    </div>
-                    <div className="text-right">
-                      <div className="font-medium text-green-600">{formatCurrency(personnel.totalRevenue)}</div>
-                      <div className="text-xs text-gray-500">
-                        Ortalama: {formatCurrency(personnel.totalRevenue / personnel.workCount)}
-                      </div>
-                    </div>
-                  </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
         </TabsContent>
 
         {/* Tahsilat Analizi Tab */}

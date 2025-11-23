@@ -3,6 +3,7 @@ import { cors } from 'npm:hono/cors'
 import { logger } from 'npm:hono/logger'
 import { createClient } from 'jsr:@supabase/supabase-js@2'
 import * as kv from './kv_store.tsx'
+import { getAllByPrefix } from './helpers.tsx'
 
 const app = new Hono()
 
@@ -163,7 +164,8 @@ app.get('/make-server-882c4243/customers', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    const customers = await kv.getByPrefix('customer:')
+    // Use getAllByPrefix to bypass 1000 record limit
+    const customers = await getAllByPrefix('customer:')
     return c.json({ customers })
   } catch (error) {
     console.log('Server error fetching customers:', error)
@@ -184,7 +186,7 @@ app.post('/make-server-882c4243/customers', async (c) => {
     }
 
     const body = await c.req.json()
-    const { name, type, contactInfo, address, notes } = body
+    const { name, type, contactInfo, address, addresses, notes } = body
 
     if (!name) {
       return c.json({ error: 'Customer name is required' }, 400)
@@ -197,6 +199,7 @@ app.post('/make-server-882c4243/customers', async (c) => {
       type: type || 'normal', // regular, problematic, normal
       contactInfo: contactInfo || {},
       address: address || '',
+      addresses: addresses || [],
       notes: notes || '',
       paymentHistory: [],
       balance: 0,
@@ -298,10 +301,11 @@ app.get('/make-server-882c4243/personnel', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    const personnel = await kv.getByPrefix('personnel:')
+    // Use getAllByPrefix to bypass 1000 record limit
+    const personnel = await getAllByPrefix('personnel:')
     
     // Get all payroll records to calculate total balance for each personnel
-    const allPayrollRecords = await kv.getByPrefix('payroll:')
+    const allPayrollRecords = await getAllByPrefix('payroll:')
     
     // Calculate total balance for each personnel
     const personnelBalances: Record<string, number> = {}
@@ -341,7 +345,7 @@ app.post('/make-server-882c4243/personnel', async (c) => {
     }
 
     const body = await c.req.json()
-    const { name, role: personnelRole, contactInfo, notes } = body
+    const { name, role: personnelRole, contactInfo, notes, tcNo } = body
 
     if (!name) {
       return c.json({ error: 'Personnel name is required' }, 400)
@@ -354,6 +358,7 @@ app.post('/make-server-882c4243/personnel', async (c) => {
       role: personnelRole || 'cleaner',
       contactInfo: contactInfo || {},
       notes: notes || '',
+      tcNo: tcNo || '',
       active: true,
       createdAt: new Date().toISOString(),
       createdBy: user.id
@@ -429,7 +434,7 @@ app.delete('/make-server-882c4243/personnel/:id', async (c) => {
     await kv.del(personnelId)
     
     // Delete all payroll records for this personnel
-    const allPayrollRecords = await kv.getByPrefix('payroll:')
+    const allPayrollRecords = await getAllByPrefix('payroll:')
     const personnelPayrollRecords = allPayrollRecords.filter((record: any) => 
       record.personnelId === personnelId
     )
@@ -468,9 +473,9 @@ app.post('/make-server-882c4243/personnel/cleanup-payroll', async (c) => {
     }
 
     // Get all personnel and payroll records
-    const allPersonnel = await kv.getByPrefix('personnel:')
+    const allPersonnel = await getAllByPrefix('personnel:')
     const personnelIds = new Set(allPersonnel.map((p: any) => p.id))
-    const allPayrollRecords = await kv.getByPrefix('payroll:')
+    const allPayrollRecords = await getAllByPrefix('payroll:')
     
     // Find orphaned payroll records
     const orphanedRecords = allPayrollRecords.filter((record: any) => 
@@ -506,13 +511,13 @@ app.get('/make-server-882c4243/personnel/:id/history', async (c) => {
     const personnelId = c.req.param('id')
     
     // Get all work orders where this personnel was assigned
-    const allWorkOrders = await kv.getByPrefix('workorder:')
+    const allWorkOrders = await getAllByPrefix('workorder:')
     const personnelWorkOrders = allWorkOrders.filter((wo: any) => 
       wo.personnelIds && wo.personnelIds.includes(personnelId)
     )
 
     // Get customer names for each work order
-    const customers = await kv.getByPrefix('customer:')
+    const customers = await getAllByPrefix('customer:')
     const customerMap = customers.reduce((acc: any, customer: any) => {
       acc[customer.id] = customer.name
       return acc
@@ -551,7 +556,8 @@ async function autoApproveTodayWorkOrders() {
     const today = new Date(now.getFullYear(), now.getMonth(), now.getDate())
     const todayStr = today.toISOString().split('T')[0]
     
-    const workOrders = await kv.getByPrefix('workorder:')
+    // Use getAllByPrefix to bypass 1000 record limit
+    const workOrders = await getAllByPrefix('workorder:')
     // Filter draft work orders scheduled for today (date is today or earlier and not yet approved)
     const draftsToApprove = workOrders.filter((wo: any) => {
       if (wo.status !== 'draft') return false
@@ -638,7 +644,8 @@ app.get('/make-server-882c4243/work-orders', async (c) => {
       console.log('Background auto-approve error:', err)
     )
 
-    const workOrders = await kv.getByPrefix('workorder:')
+    // Use getAllByPrefix to bypass 1000 record limit
+    const workOrders = await getAllByPrefix('workorder:')
     
     // Filter based on role
     const role = user.user_metadata?.role
@@ -671,7 +678,7 @@ app.post('/make-server-882c4243/work-orders', async (c) => {
     }
 
     const body = await c.req.json()
-    const { customerId, personnelIds, date, description, totalAmount, paidAmount, autoApprove } = body
+    const { customerId, personnelIds, date, description, totalAmount, paidAmount, autoApprove, customerAddress } = body
 
     if (!customerId || !date) {
       return c.json({ error: 'Customer and date are required' }, 400)
@@ -682,11 +689,14 @@ app.post('/make-server-882c4243/work-orders', async (c) => {
     // Get customer name to store in the record for searching
     const customer = await kv.get(customerId)
     const customerName = customer?.name || 'Bilinmiyor'
+    // Use provided customerAddress or fallback to customer's default address
+    const workOrderAddress = customerAddress || customer?.address || ''
     
     const workOrder = {
       id: workOrderId,
       customerId,
       customerName,
+      customerAddress: workOrderAddress,
       personnelIds: personnelIds || [],
       date,
       description: description || '',
@@ -958,13 +968,13 @@ app.delete('/make-server-882c4243/work-orders/:id', async (c) => {
     await kv.del(workOrderId)
 
     // Delete related transactions and collections
-    const allTransactions = await kv.getByPrefix('transaction:')
+    const allTransactions = await getAllByPrefix('transaction:')
     const relatedTransactions = allTransactions.filter((t: any) => t.relatedWorkOrderId === workOrderId)
     for (const transaction of relatedTransactions) {
       await kv.del(transaction.id)
     }
 
-    const allCollections = await kv.getByPrefix('collection:')
+    const allCollections = await getAllByPrefix('collection:')
     const relatedCollections = allCollections.filter((c: any) => c.relatedWorkOrderId === workOrderId)
     for (const collection of relatedCollections) {
       await kv.del(collection.id)
@@ -985,6 +995,256 @@ app.delete('/make-server-882c4243/work-orders/:id', async (c) => {
     return c.json({ success: true })
   } catch (error) {
     console.log('Server error deleting work order:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
+// Delete ALL work orders (admin only) - DANGEROUS!
+app.post('/make-server-882c4243/work-orders/delete-all', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user || user.user_metadata?.role !== 'admin') {
+      return c.json({ error: 'Unauthorized - Admin access required' }, 401)
+    }
+
+    console.log('🗑️ Starting DELETE ALL work orders...')
+
+    // Get all work orders, transactions, and collections
+    const [allWorkOrders, allTransactions, allCollections] = await Promise.all([
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('transaction:'),
+      getAllByPrefix('collection:')
+    ])
+    
+    console.log(`📋 Found:`, {
+      workOrders: allWorkOrders.length,
+      transactions: allTransactions.length,
+      collections: allCollections.length
+    })
+
+    // Collect IDs to delete
+    const workOrderIds = allWorkOrders.map((wo: any) => wo.id)
+    const transactionIds = allTransactions
+      .filter((t: any) => t.relatedWorkOrderId)
+      .map((t: any) => t.id)
+    const collectionIds = allCollections
+      .filter((c: any) => c.relatedWorkOrderId)
+      .map((c: any) => c.id)
+
+    // Batch delete in chunks
+    const CHUNK_SIZE = 100
+    
+    if (workOrderIds.length > 0) {
+      const chunks = Math.ceil(workOrderIds.length / CHUNK_SIZE)
+      console.log(`Deleting ${workOrderIds.length} work orders in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, workOrderIds.length)
+        const chunk = workOrderIds.slice(start, end)
+        await kv.mdel(chunk)
+        console.log(`Chunk ${i + 1}/${chunks}: Deleted ${chunk.length} work orders`)
+      }
+    }
+
+    if (transactionIds.length > 0) {
+      const chunks = Math.ceil(transactionIds.length / CHUNK_SIZE)
+      console.log(`Deleting ${transactionIds.length} transactions in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, transactionIds.length)
+        const chunk = transactionIds.slice(start, end)
+        await kv.mdel(chunk)
+        console.log(`Chunk ${i + 1}/${chunks}: Deleted ${chunk.length} transactions`)
+      }
+    }
+
+    if (collectionIds.length > 0) {
+      const chunks = Math.ceil(collectionIds.length / CHUNK_SIZE)
+      console.log(`Deleting ${collectionIds.length} collections in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, collectionIds.length)
+        const chunk = collectionIds.slice(start, end)
+        await kv.mdel(chunk)
+        console.log(`Chunk ${i + 1}/${chunks}: Deleted ${chunk.length} collections`)
+      }
+    }
+
+    console.log(`✅ DELETE ALL completed`)
+
+    // Log the action
+    await kv.set(`log:${Date.now()}`, {
+      action: 'workorders_deleted_all',
+      userId: user.id,
+      userName: user.user_metadata?.name,
+      deletedWorkOrders: workOrderIds.length,
+      deletedTransactions: transactionIds.length,
+      deletedCollections: collectionIds.length,
+      timestamp: new Date().toISOString()
+    })
+
+    return c.json({ 
+      success: true,
+      deletedWorkOrders: workOrderIds.length,
+      deletedTransactions: transactionIds.length,
+      deletedCollections: collectionIds.length,
+      message: `${workOrderIds.length} iş emri, ${transactionIds.length} işlem ve ${collectionIds.length} tahsilat kaydı silindi`
+    })
+  } catch (error) {
+    console.log('Server error deleting all work orders:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
+// Clean duplicate work orders (admin only)
+app.post('/make-server-882c4243/work-orders/cleanup-duplicates', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user || user.user_metadata?.role !== 'admin') {
+      return c.json({ error: 'Unauthorized - Admin access required' }, 401)
+    }
+
+    console.log('🧹 Starting duplicate work order cleanup...')
+
+    // Get all work orders, transactions, and collections ONCE (optimization)
+    const [allWorkOrders, allTransactions, allCollections] = await Promise.all([
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('transaction:'),
+      getAllByPrefix('collection:')
+    ])
+    
+    console.log(`📋 Found ${allWorkOrders.length} work orders`)
+
+    // Group by customer + date + totalAmount
+    const groups = new Map<string, any[]>()
+    
+    allWorkOrders.forEach((wo: any) => {
+      const key = `${wo.customerId}_${wo.date}_${wo.totalAmount}`
+      if (!groups.has(key)) {
+        groups.set(key, [])
+      }
+      groups.get(key)!.push(wo)
+    })
+
+    // Find duplicate groups (more than 1 work order with same key)
+    const duplicateGroups = Array.from(groups.entries())
+      .filter(([_, workOrders]) => workOrders.length > 1)
+
+    console.log(`🔍 Found ${duplicateGroups.length} duplicate groups`)
+
+    let deletedCount = 0
+    let deletedTransactionsCount = 0
+    let deletedCollectionsCount = 0
+    const deletedWorkOrders: any[] = []
+    const idsToDelete: string[] = []
+    const transactionsToDelete: string[] = []
+    const collectionsToDelete: string[] = []
+
+    // Collect all IDs to delete first
+    for (const [key, workOrders] of duplicateGroups) {
+      // Sort by createdAt to keep the oldest one
+      workOrders.sort((a: any, b: any) => 
+        new Date(a.createdAt).getTime() - new Date(b.createdAt).getTime()
+      )
+
+      // Keep the first, delete the rest
+      const toDelete = workOrders.slice(1)
+      
+      for (const wo of toDelete) {
+        idsToDelete.push(wo.id)
+        deletedWorkOrders.push({
+          id: wo.id,
+          customerName: wo.customerName,
+          date: wo.date,
+          totalAmount: wo.totalAmount
+        })
+
+        // Find related transactions
+        const relatedTransactions = allTransactions.filter((t: any) => 
+          t.relatedWorkOrderId === wo.id
+        )
+        relatedTransactions.forEach(t => transactionsToDelete.push(t.id))
+
+        // Find related collections
+        const relatedCollections = allCollections.filter((c: any) => 
+          c.relatedWorkOrderId === wo.id
+        )
+        relatedCollections.forEach(c => collectionsToDelete.push(c.id))
+      }
+    }
+
+    // Batch delete using mdel in chunks to avoid timeout
+    const CHUNK_SIZE = 100 // Delete 100 records at a time
+    
+    if (idsToDelete.length > 0) {
+      const chunks = Math.ceil(idsToDelete.length / CHUNK_SIZE)
+      console.log(`Deleting ${idsToDelete.length} work orders in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, idsToDelete.length)
+        const chunk = idsToDelete.slice(start, end)
+        await kv.mdel(chunk)
+        console.log(`Chunk ${i + 1}/${chunks}: Deleted ${chunk.length} work orders`)
+      }
+      deletedCount = idsToDelete.length
+    }
+
+    if (transactionsToDelete.length > 0) {
+      const chunks = Math.ceil(transactionsToDelete.length / CHUNK_SIZE)
+      console.log(`Deleting ${transactionsToDelete.length} transactions in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, transactionsToDelete.length)
+        const chunk = transactionsToDelete.slice(start, end)
+        await kv.mdel(chunk)
+        console.log(`Chunk ${i + 1}/${chunks}: Deleted ${chunk.length} transactions`)
+      }
+      deletedTransactionsCount = transactionsToDelete.length
+    }
+
+    if (collectionsToDelete.length > 0) {
+      const chunks = Math.ceil(collectionsToDelete.length / CHUNK_SIZE)
+      console.log(`Deleting ${collectionsToDelete.length} collections in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, collectionsToDelete.length)
+        const chunk = collectionsToDelete.slice(start, end)
+        await kv.mdel(chunk)
+        console.log(`Chunk ${i + 1}/${chunks}: Deleted ${chunk.length} collections`)
+      }
+      deletedCollectionsCount = collectionsToDelete.length
+    }
+
+    console.log(`✅ Cleanup complete: ${deletedCount} duplicates removed`)
+
+    // Log the cleanup action
+    await kv.set(`log:${Date.now()}`, {
+      action: 'workorder_duplicates_cleaned',
+      userId: user.id,
+      userName: user.user_metadata?.name,
+      deletedWorkOrders: deletedCount,
+      deletedTransactions: deletedTransactionsCount,
+      deletedCollections: deletedCollectionsCount,
+      details: deletedWorkOrders,
+      timestamp: new Date().toISOString()
+    })
+
+    return c.json({ 
+      success: true,
+      deletedWorkOrders: deletedCount,
+      deletedTransactions: deletedTransactionsCount,
+      deletedCollections: deletedCollectionsCount,
+      details: deletedWorkOrders,
+      message: `${deletedCount} duplicate iş emri ve ilgili ${deletedTransactionsCount} işlem + ${deletedCollectionsCount} tahsilat kaydı silindi`
+    })
+  } catch (error) {
+    console.log('Server error cleaning duplicate work orders:', error)
     return c.json({ error: String(error) }, 500)
   }
 })
@@ -1011,6 +1271,7 @@ app.post('/make-server-882c4243/work-orders/recurring', async (c) => {
       totalAmount, 
       paidAmount, 
       autoApprove,
+      customerAddress,
       recurrenceType, // 'weekly' | 'biweekly' | 'monthly-date' | 'monthly-weekday'
       recurrenceDay, // 0-6 for weekly/biweekly (Sunday-Saturday)
       recurrenceDate, // 1-31 for monthly-date
@@ -1022,6 +1283,12 @@ app.post('/make-server-882c4243/work-orders/recurring', async (c) => {
     if (!customerId || !startDate || !recurrenceType || !endDate) {
       return c.json({ error: 'Customer, start date, recurrence type, and end date are required' }, 400)
     }
+
+    // Get customer info once for all work orders
+    const customer = await kv.get(customerId)
+    const customerName = customer?.name || 'Bilinmiyor'
+    // Use provided customerAddress or fallback to customer's default address
+    const workOrderAddress = customerAddress || customer?.address || ''
 
     // Calculate all dates based on recurrence type
     const dates: string[] = []
@@ -1122,6 +1389,8 @@ app.post('/make-server-882c4243/work-orders/recurring', async (c) => {
       const workOrder = {
         id: workOrderId,
         customerId,
+        customerName,
+        customerAddress: workOrderAddress,
         personnelIds: personnelIds || [],
         date,
         description: description || '',
@@ -1142,9 +1411,6 @@ app.post('/make-server-882c4243/work-orders/recurring', async (c) => {
 
       // If auto-approved and has paidAmount, create income transaction and collection record
       if (autoApprove && paidAmount > 0) {
-        const customer = await kv.get(customerId)
-        const customerName = customer?.name || 'Bilinmiyor'
-
         const transactionId = `transaction:${Date.now()}_${Math.random().toString(36).substr(2, 9)}`
         const transaction = {
           id: transactionId,
@@ -1206,6 +1472,158 @@ app.post('/make-server-882c4243/work-orders/recurring', async (c) => {
   }
 })
 
+// Bulk import work orders from CSV
+app.post('/make-server-882c4243/work-orders/bulk', async (c) => {
+  try {
+    const user = await getAuthUser(c.req.raw)
+    if (!user) {
+      return c.json({ error: 'Unauthorized' }, 401)
+    }
+
+    const role = user.user_metadata?.role
+    if (role !== 'admin' && role !== 'secretary') {
+      return c.json({ error: 'Only admin and secretary can bulk import work orders' }, 403)
+    }
+
+    const body = await c.req.json()
+    const { workOrders } = body
+
+    if (!workOrders || !Array.isArray(workOrders) || workOrders.length === 0) {
+      return c.json({ error: 'Work orders array is required' }, 400)
+    }
+
+    // Get all customers ONCE (optimization)
+    const allCustomers = await getAllByPrefix('customer:')
+    console.log('📊 BACKEND İÇE AKTARMA BAŞLADI:', {
+      receivedCount: workOrders.length
+    })
+
+    // Create customer map for fast lookups
+    const customerMap = new Map()
+    allCustomers.forEach((c: any) => customerMap.set(c.id, c))
+
+    const createdWorkOrders = []
+    const keysToSet: string[] = []
+    const valuesToSet: any[] = []
+    let counter = 0
+    
+    for (const wo of workOrders) {
+      const workOrderId = `workorder:${Date.now()}_${counter++}_${Math.random().toString(36).substr(2, 9)}`
+      
+      // Get customer name from map
+      const customer = customerMap.get(wo.customerId)
+      const customerName = customer?.name || 'Bilinmiyor'
+
+      const workOrder = {
+        id: workOrderId,
+        customerId: wo.customerId,
+        customerName,
+        customerAddress: wo.customerAddress || '',
+        personnelIds: wo.personnelIds || [],
+        date: wo.date,
+        description: wo.description || '',
+        totalAmount: wo.totalAmount || 0,
+        paidAmount: wo.paidAmount || 0,
+        status: wo.autoApprove ? 'approved' : 'draft',
+        approvedAt: wo.autoApprove ? new Date().toISOString() : null,
+        completedAt: null,
+        source: wo.source || 'csv_import',
+        createdAt: new Date().toISOString(),
+        createdBy: user.id,
+        createdByName: user.user_metadata?.name
+      }
+
+      keysToSet.push(workOrderId)
+      valuesToSet.push(workOrder)
+      createdWorkOrders.push(workOrder)
+
+      // If auto-approved and has paidAmount, create income transaction
+      if (wo.autoApprove && wo.paidAmount > 0) {
+        const transactionId = `transaction:${Date.now()}_${counter++}_${Math.random().toString(36).substr(2, 9)}`
+        const transaction = {
+          id: transactionId,
+          type: 'income',
+          amount: wo.paidAmount,
+          date: wo.date,
+          category: 'İş Emri Tahsilatı',
+          description: `CSV İçe Aktarımı: ${wo.description || 'Temizlik hizmeti'}`,
+          relatedCustomerId: wo.customerId,
+          relatedWorkOrderId: workOrderId,
+          createdAt: new Date().toISOString(),
+          createdBy: user.id,
+          createdByName: user.user_metadata?.name
+        }
+        keysToSet.push(transactionId)
+        valuesToSet.push(transaction)
+
+        const collectionId = `collection:${Date.now()}_${counter++}_${Math.random().toString(36).substr(2, 9)}`
+        const collection = {
+          id: collectionId,
+          customerId: wo.customerId,
+          customerName: customerName,
+          amount: wo.paidAmount,
+          date: wo.date,
+          description: wo.description || 'CSV içe aktarımı',
+          workDate: wo.date,
+          relatedWorkOrderId: workOrderId,
+          createdAt: new Date().toISOString(),
+          createdBy: user.id,
+          createdByName: user.user_metadata?.name
+        }
+        keysToSet.push(collectionId)
+        valuesToSet.push(collection)
+      }
+    }
+
+    // Batch insert all records in chunks to avoid timeout
+    if (keysToSet.length > 0) {
+      const CHUNK_SIZE = 50 // Insert 50 records at a time
+      const chunks = Math.ceil(keysToSet.length / CHUNK_SIZE)
+      
+      console.log(`Inserting ${keysToSet.length} records in ${chunks} chunks`)
+      
+      for (let i = 0; i < chunks; i++) {
+        const start = i * CHUNK_SIZE
+        const end = Math.min(start + CHUNK_SIZE, keysToSet.length)
+        const chunkKeys = keysToSet.slice(start, end)
+        const chunkValues = valuesToSet.slice(start, end)
+        
+        await kv.mset(chunkKeys, chunkValues)
+        console.log(`Chunk ${i + 1}/${chunks}: Inserted ${chunkKeys.length} records`)
+      }
+      
+      console.log('✅ Batch insert completed')
+    }
+
+    // Log the action
+    await kv.set(`log:${Date.now()}`, {
+      action: 'bulk_workorders_imported',
+      userId: user.id,
+      userName: user.user_metadata?.name,
+      count: createdWorkOrders.length,
+      skipped: 0,
+      timestamp: new Date().toISOString()
+    })
+
+    console.log('📊 BACKEND İÇE AKTARMA SONUÇLARI:', {
+      received: workOrders.length,
+      created: createdWorkOrders.length,
+      skipped: 0,
+      total_db_records: keysToSet.length
+    })
+
+    return c.json({ 
+      success: true, 
+      workOrders: createdWorkOrders,
+      count: createdWorkOrders.length,
+      skipped: 0
+    })
+  } catch (error) {
+    console.log('Server error bulk importing work orders:', error)
+    return c.json({ error: String(error) }, 500)
+  }
+})
+
 // Cron endpoint to auto-approve work orders (can be called by external cron services)
 app.post('/make-server-882c4243/cron/auto-approve', async (c) => {
   try {
@@ -1229,7 +1647,7 @@ app.post('/make-server-882c4243/cron/auto-approve', async (c) => {
 // Legacy endpoint for backward compatibility (approves ALL drafts)
 app.post('/make-server-882c4243/auto-approve', async (c) => {
   try {
-    const workOrders = await kv.getByPrefix('workorder:')
+    const workOrders = await getAllByPrefix('workorder:')
     const drafts = workOrders.filter((wo: any) => wo.status === 'draft')
     
     let approvedCount = 0
@@ -1305,7 +1723,7 @@ app.get('/make-server-882c4243/transactions', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    const transactions = await kv.getByPrefix('transaction:')
+    const transactions = await getAllByPrefix('transaction:')
     return c.json({ transactions })
   } catch (error) {
     console.log('Server error fetching transactions:', error)
@@ -1444,7 +1862,7 @@ app.get('/make-server-882c4243/invoices', async (c) => {
       return c.json({ error: 'Unauthorized' }, 401)
     }
 
-    const invoices = await kv.getByPrefix('invoice:')
+    const invoices = await getAllByPrefix('invoice:')
     return c.json({ invoices })
   } catch (error) {
     console.log('Server error fetching invoices:', error)
@@ -1632,7 +2050,7 @@ app.get('/make-server-882c4243/logs', async (c) => {
       return c.json({ error: 'Unauthorized - Admin access required' }, 401)
     }
 
-    const logs = await kv.getByPrefix('log:')
+    const logs = await getAllByPrefix('log:')
     // Sort by timestamp descending
     logs.sort((a: any, b: any) => 
       new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()
@@ -1660,11 +2078,11 @@ app.get('/make-server-882c4243/payroll', async (c) => {
     const date = c.req.query('date') || new Date().toISOString().split('T')[0]
     
     // Get all payroll records for the date
-    const allRecords = await kv.getByPrefix(`payroll:${date}:`)
+    const allRecords = await getAllByPrefix(`payroll:${date}:`)
     
     // Calculate cumulative balance up to the day before selected date
     // This finds the most recent balance for each personnel before the selected date
-    const allPayrollRecords = await kv.getByPrefix('payroll:')
+    const allPayrollRecords = await getAllByPrefix('payroll:')
     
     const previousBalances: Record<string, number> = {}
     
@@ -1726,7 +2144,7 @@ app.post('/make-server-882c4243/payroll', async (c) => {
     }
 
     // AUTO-CALCULATE CARRYOVER: Find most recent balance before this date
-    const allPayrollRecords = await kv.getByPrefix('payroll:')
+    const allPayrollRecords = await getAllByPrefix('payroll:')
     const previousRecords = allPayrollRecords.filter((record: any) => 
       record.personnelId === personnelId && 
       record.date && 
@@ -1824,11 +2242,11 @@ app.get('/make-server-882c4243/cash-flow', async (c) => {
     // Get collections and expenses for the date
     // Get both work order collections and manual collections
     const [allCollections, allManualCollections, allExpenses, allPayrollRecords, allPersonnel] = await Promise.all([
-      kv.getByPrefix('collection:'),
-      kv.getByPrefix('cashflow:collection:'),
-      kv.getByPrefix('cashflow:expense:'),
-      kv.getByPrefix(`payroll:${date}:`),
-      kv.getByPrefix('personnel:')
+      getAllByPrefix('collection:'),
+      getAllByPrefix('cashflow:collection:'),
+      getAllByPrefix('cashflow:expense:'),
+      getAllByPrefix(`payroll:${date}:`),
+      getAllByPrefix('personnel:')
     ])
     
     // Filter payroll records to only include existing personnel
@@ -2251,13 +2669,13 @@ app.get('/make-server-882c4243/history-search', async (c) => {
 
     // Get all data sources - NO DATE FILTERING
     const [allCollections, allExpenses, allPayrolls, allTransactions, allWorkOrders, allPersonnel, allCustomers] = await Promise.all([
-      kv.getByPrefix('cashflow:collection:'),
-      kv.getByPrefix('cashflow:expense:'),
-      kv.getByPrefix('payroll:'),
-      kv.getByPrefix('transaction:'),
-      kv.getByPrefix('workorder:'),
-      kv.getByPrefix('personnel:'),
-      kv.getByPrefix('customer:')
+      getAllByPrefix('cashflow:collection:'),
+      getAllByPrefix('cashflow:expense:'),
+      getAllByPrefix('payroll:'),
+      getAllByPrefix('transaction:'),
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('personnel:'),
+      getAllByPrefix('customer:')
     ])
 
     // Create lookup maps
@@ -2530,10 +2948,10 @@ app.get('/make-server-882c4243/pending-collections', async (c) => {
 
     console.log('Fetching pending collections...')
 
-    // Get all work orders and customers
+    // Get all work orders and customers - use getAllByPrefix to bypass 1000 record limit
     const [allWorkOrders, allCustomers] = await Promise.all([
-      kv.getByPrefix('workorder:'),
-      kv.getByPrefix('customer:')
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('customer:')
     ])
 
     // Create customer map
@@ -2750,13 +3168,13 @@ app.get('/make-server-882c4243/monthly-search', async (c) => {
     const endDate = `${year}-${String(month).padStart(2, '0')}-${endDay}`
 
     const [allCollections, allExpenses, allPayrolls, allTransactions, allWorkOrders, allPersonnel, allCustomers] = await Promise.all([
-      kv.getByPrefix('cashflow:collection:'),
-      kv.getByPrefix('cashflow:expense:'),
-      kv.getByPrefix('payroll:'),
-      kv.getByPrefix('transaction:'),
-      kv.getByPrefix('workorder:'),
-      kv.getByPrefix('personnel:'),
-      kv.getByPrefix('customer:')
+      getAllByPrefix('cashflow:collection:'),
+      getAllByPrefix('cashflow:expense:'),
+      getAllByPrefix('payroll:'),
+      getAllByPrefix('transaction:'),
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('personnel:'),
+      getAllByPrefix('customer:')
     ])
 
     // Create lookup maps
@@ -3035,11 +3453,11 @@ app.get('/make-server-882c4243/dashboard', async (c) => {
 
     // Get all data in parallel
     const [workOrders, transactions, customers, payrolls, collections] = await Promise.all([
-      kv.getByPrefix('workorder:'),
-      kv.getByPrefix('transaction:'),
-      kv.getByPrefix('customer:'),
-      kv.getByPrefix('payroll:'),
-      kv.getByPrefix('collection:')
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('transaction:'),
+      getAllByPrefix('customer:'),
+      getAllByPrefix('payroll:'),
+      getAllByPrefix('collection:')
     ])
 
     // Today's work orders
@@ -3233,39 +3651,71 @@ app.get('/make-server-882c4243/analytics', async (c) => {
 
     const months = parseInt(c.req.query('months') || '6')
     
-    // Get all data
+    console.log('📊 Analytics: Starting data fetch...')
+    const startTime = Date.now()
+    
+    // Get all data in parallel
     const [workOrders, transactions, customers, personnel, collections] = await Promise.all([
-      kv.getByPrefix('workorder:'),
-      kv.getByPrefix('transaction:'),
-      kv.getByPrefix('customer:'),
-      kv.getByPrefix('personnel:'),
-      kv.getByPrefix('collection:')
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('transaction:'),
+      getAllByPrefix('customer:'),
+      getAllByPrefix('personnel:'),
+      getAllByPrefix('collection:')
     ])
+    
+    console.log(`📊 Analytics: Data fetched in ${Date.now() - startTime}ms`, {
+      workOrders: workOrders.length,
+      transactions: transactions.length,
+      customers: customers.length,
+      personnel: personnel.length,
+      collections: collections.length
+    })
 
     // Calculate date range
     const now = new Date()
     const startDate = new Date(now.getFullYear(), now.getMonth() - months + 1, 1)
+    const startDateStr = startDate.toISOString().split('T')[0]
 
-    // Monthly trends - Include collections as income
+    // Filter data by date range FIRST to reduce processing
+    const filteredWorkOrders = workOrders.filter((wo: any) => wo.date >= startDateStr)
+    const filteredTransactions = transactions.filter((t: any) => t.date >= startDateStr)
+    const filteredCollections = collections.filter((c: any) => c.date >= startDateStr)
+    
+    console.log(`📊 Analytics: Filtered to date range ${startDateStr}`, {
+      workOrders: filteredWorkOrders.length,
+      transactions: filteredTransactions.length,
+      collections: filteredCollections.length
+    })
+
+    // Monthly trends - optimized with pre-filtered data
     const monthlyTrends = []
     for (let i = 0; i < months; i++) {
       const date = new Date(now.getFullYear(), now.getMonth() - (months - 1 - i), 1)
       const monthStr = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}`
       const monthName = date.toLocaleDateString('tr-TR', { year: 'numeric', month: 'short' })
 
-      const monthCollections = collections
-        .filter((c: any) => c.date?.startsWith(monthStr))
-        .reduce((sum: number, c: any) => sum + (c.amount || 0), 0)
+      let monthCollections = 0
+      let monthIncomeTransactions = 0
+      let monthExpense = 0
 
-      const monthIncomeTransactions = transactions
-        .filter((t: any) => t.type === 'income' && t.date?.startsWith(monthStr))
-        .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
+      // Single pass through filtered data
+      for (const c of filteredCollections) {
+        if (c.date?.startsWith(monthStr)) {
+          monthCollections += (c.amount || 0)
+        }
+      }
+
+      for (const t of filteredTransactions) {
+        if (t.date?.startsWith(monthStr)) {
+          if (t.type === 'income') {
+            monthIncomeTransactions += (t.amount || 0)
+          } else if (t.type === 'expense') {
+            monthExpense += (t.amount || 0)
+          }
+        }
+      }
 
       const monthIncome = monthCollections + monthIncomeTransactions
-
-      const monthExpense = transactions
-        .filter((t: any) => t.type === 'expense' && t.date?.startsWith(monthStr))
-        .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
 
       monthlyTrends.push({
         month: monthName,
@@ -3275,53 +3725,79 @@ app.get('/make-server-882c4243/analytics', async (c) => {
       })
     }
 
-    // Customer profitability
-    const customerProfitability = customers.map((customer: any) => {
-      const customerWorkOrders = workOrders.filter((wo: any) => wo.customerId === customer.id)
-      const totalRevenue = customerWorkOrders.reduce((sum: number, wo: any) => sum + (wo.paidAmount || 0), 0)
-      const workCount = customerWorkOrders.length
+    // Customer profitability - Create map for faster lookup
+    const customerWorkOrdersMap = new Map<string, any[]>()
+    for (const wo of filteredWorkOrders) {
+      if (!customerWorkOrdersMap.has(wo.customerId)) {
+        customerWorkOrdersMap.set(wo.customerId, [])
+      }
+      customerWorkOrdersMap.get(wo.customerId)!.push(wo)
+    }
 
-      return {
+    const customerProfitability = []
+    for (const customer of customers) {
+      const customerWorkOrders = customerWorkOrdersMap.get(customer.id) || []
+      if (customerWorkOrders.length === 0) continue
+
+      let totalRevenue = 0
+      for (const wo of customerWorkOrders) {
+        totalRevenue += (wo.paidAmount || 0)
+      }
+
+      customerProfitability.push({
         customerName: customer.name,
         totalRevenue,
-        workCount
-      }
-    }).filter((c: any) => c.workCount > 0)
-      .sort((a: any, b: any) => b.totalRevenue - a.totalRevenue)
+        workCount: customerWorkOrders.length
+      })
+    }
 
-    // Top 10 customers
-    const topCustomers = customerProfitability.slice(0, 10).map((c: any) => ({
+    // Sort and get top 10
+    customerProfitability.sort((a, b) => b.totalRevenue - a.totalRevenue)
+    const topCustomers = customerProfitability.slice(0, 10).map(c => ({
       name: c.customerName,
       revenue: c.totalRevenue,
       workCount: c.workCount
     }))
 
-    // Personnel performance
-    const personnelPerformance = personnel
-      .filter((p: any) => p.active)
-      .map((person: any) => {
-        const personWorkOrders = workOrders.filter((wo: any) => 
-          wo.personnelIds?.includes(person.id) && wo.status === 'completed'
-        )
-        const totalRevenue = personWorkOrders.reduce((sum: number, wo: any) => sum + (wo.paidAmount || 0), 0)
-        const workCount = personWorkOrders.length
-
-        return {
-          personnelName: person.name,
-          totalRevenue,
-          workCount
+    // Personnel performance - Create map for faster lookup
+    const personnelWorkOrdersMap = new Map<string, any[]>()
+    for (const wo of filteredWorkOrders) {
+      if (wo.status === 'completed' && wo.personnelIds) {
+        for (const pid of wo.personnelIds) {
+          if (!personnelWorkOrdersMap.has(pid)) {
+            personnelWorkOrdersMap.set(pid, [])
+          }
+          personnelWorkOrdersMap.get(pid)!.push(wo)
         }
-      })
-      .filter((p: any) => p.workCount > 0)
-      .sort((a: any, b: any) => b.workCount - a.workCount)
+      }
+    }
 
-    // Service breakdown (by transaction category and work orders)
+    const personnelPerformance = []
+    for (const person of personnel) {
+      if (!person.active) continue
+
+      const personWorkOrders = personnelWorkOrdersMap.get(person.id) || []
+      if (personWorkOrders.length === 0) continue
+
+      let totalRevenue = 0
+      for (const wo of personWorkOrders) {
+        totalRevenue += (wo.paidAmount || 0)
+      }
+
+      personnelPerformance.push({
+        personnelName: person.name,
+        totalRevenue,
+        workCount: personWorkOrders.length
+      })
+    }
+
+    personnelPerformance.sort((a, b) => b.workCount - a.workCount)
+
+    // Service breakdown - optimized
     const serviceMap = new Map()
     
-    // Add income transactions
-    transactions
-      .filter((t: any) => t.type === 'income' && t.date >= startDate.toISOString())
-      .forEach((t: any) => {
+    for (const t of filteredTransactions) {
+      if (t.type === 'income') {
         const category = t.category || 'Diğer'
         if (!serviceMap.has(category)) {
           serviceMap.set(category, { count: 0, revenue: 0 })
@@ -3329,68 +3805,90 @@ app.get('/make-server-882c4243/analytics', async (c) => {
         const current = serviceMap.get(category)
         current.count++
         current.revenue += t.amount || 0
-      })
+      }
+    }
     
-    // Add collections (from work orders)
-    collections
-      .filter((c: any) => c.date >= startDate.toISOString().split('T')[0])
-      .forEach((c: any) => {
-        const category = 'Temizlik Hizmeti'
-        if (!serviceMap.has(category)) {
-          serviceMap.set(category, { count: 0, revenue: 0 })
-        }
-        const current = serviceMap.get(category)
-        current.count++
-        current.revenue += c.amount || 0
-      })
+    for (const c of filteredCollections) {
+      const category = 'Temizlik Hizmeti'
+      if (!serviceMap.has(category)) {
+        serviceMap.set(category, { count: 0, revenue: 0 })
+      }
+      const current = serviceMap.get(category)
+      current.count++
+      current.revenue += c.amount || 0
+    }
 
-    const serviceBreakdown = Array.from(serviceMap.entries()).map(([category, data]: [string, any]) => ({
-      category,
-      count: data.count,
-      revenue: data.revenue
-    })).sort((a, b) => b.revenue - a.revenue)
+    const serviceBreakdown = Array.from(serviceMap.entries())
+      .map(([category, data]: [string, any]) => ({
+        category,
+        count: data.count,
+        revenue: data.revenue
+      }))
+      .sort((a, b) => b.revenue - a.revenue)
 
-    // Collection rates
-    const totalBilled = workOrders.reduce((sum: number, wo: any) => sum + (wo.totalAmount || 0), 0)
-    const totalCollected = workOrders.reduce((sum: number, wo: any) => sum + (wo.paidAmount || 0), 0)
+    // Collection rates - use ALL work orders for historical accuracy
+    let totalBilled = 0
+    let totalCollected = 0
+    for (const wo of workOrders) {
+      totalBilled += (wo.totalAmount || 0)
+      totalCollected += (wo.paidAmount || 0)
+    }
     const outstanding = totalBilled - totalCollected
     const collectionRate = totalBilled > 0 ? (totalCollected / totalBilled) * 100 : 0
 
-    // Monthly stats (this month vs last month) - Include collections
+    // Monthly stats (this month vs last month)
     const thisMonth = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}`
     const lastMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1)
     const lastMonthStr = `${lastMonth.getFullYear()}-${String(lastMonth.getMonth() + 1).padStart(2, '0')}`
 
-    const thisMonthCollections = collections
-      .filter((c: any) => c.date?.startsWith(thisMonth))
-      .reduce((sum: number, c: any) => sum + (c.amount || 0), 0)
-    
-    const thisMonthIncomeTransactions = transactions
-      .filter((t: any) => t.type === 'income' && t.date?.startsWith(thisMonth))
-      .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
-    
+    let thisMonthCollections = 0
+    let thisMonthIncomeTransactions = 0
+    let lastMonthCollections = 0
+    let lastMonthIncomeTransactions = 0
+    let thisMonthExpense = 0
+    let lastMonthExpense = 0
+    let thisMonthWorkOrders = 0
+    let lastMonthWorkOrders = 0
+
+    // Single pass through collections
+    for (const c of filteredCollections) {
+      if (c.date?.startsWith(thisMonth)) {
+        thisMonthCollections += (c.amount || 0)
+      } else if (c.date?.startsWith(lastMonthStr)) {
+        lastMonthCollections += (c.amount || 0)
+      }
+    }
+
+    // Single pass through transactions
+    for (const t of filteredTransactions) {
+      if (t.date?.startsWith(thisMonth)) {
+        if (t.type === 'income') {
+          thisMonthIncomeTransactions += (t.amount || 0)
+        } else if (t.type === 'expense') {
+          thisMonthExpense += (t.amount || 0)
+        }
+      } else if (t.date?.startsWith(lastMonthStr)) {
+        if (t.type === 'income') {
+          lastMonthIncomeTransactions += (t.amount || 0)
+        } else if (t.type === 'expense') {
+          lastMonthExpense += (t.amount || 0)
+        }
+      }
+    }
+
+    // Single pass through work orders
+    for (const wo of filteredWorkOrders) {
+      if (wo.date?.startsWith(thisMonth)) {
+        thisMonthWorkOrders++
+      } else if (wo.date?.startsWith(lastMonthStr)) {
+        lastMonthWorkOrders++
+      }
+    }
+
     const thisMonthIncome = thisMonthCollections + thisMonthIncomeTransactions
-    
-    const lastMonthCollections = collections
-      .filter((c: any) => c.date?.startsWith(lastMonthStr))
-      .reduce((sum: number, c: any) => sum + (c.amount || 0), 0)
-    
-    const lastMonthIncomeTransactions = transactions
-      .filter((t: any) => t.type === 'income' && t.date?.startsWith(lastMonthStr))
-      .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
-    
     const lastMonthIncome = lastMonthCollections + lastMonthIncomeTransactions
 
-    const thisMonthExpense = transactions
-      .filter((t: any) => t.type === 'expense' && t.date?.startsWith(thisMonth))
-      .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
-    
-    const lastMonthExpense = transactions
-      .filter((t: any) => t.type === 'expense' && t.date?.startsWith(lastMonthStr))
-      .reduce((sum: number, t: any) => sum + (t.amount || 0), 0)
-
-    const thisMonthWorkOrders = workOrders.filter((wo: any) => wo.date?.startsWith(thisMonth)).length
-    const lastMonthWorkOrders = workOrders.filter((wo: any) => wo.date?.startsWith(lastMonthStr)).length
+    console.log(`📊 Analytics: Completed in ${Date.now() - startTime}ms`)
 
     return c.json({
       monthlyTrends,
@@ -3440,8 +3938,8 @@ app.post('/make-server-882c4243/migrate-collections', async (c) => {
     
     // Get all work orders and existing collections
     const [allWorkOrders, allCollections] = await Promise.all([
-      kv.getByPrefix('workorder:'),
-      kv.getByPrefix('collection:')
+      getAllByPrefix('workorder:'),
+      getAllByPrefix('collection:')
     ])
 
     console.log(`Found ${allWorkOrders.length} total work orders`)

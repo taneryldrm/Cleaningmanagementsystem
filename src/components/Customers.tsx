@@ -10,6 +10,7 @@ import { Badge } from './ui/badge'
 import { Plus, Search, Edit, Trash2, Eye, Users, Calendar, DollarSign, Copy, X, CheckCircle, AlertCircle, Clock } from 'lucide-react'
 import { Textarea } from './ui/textarea'
 import { toast } from 'sonner@2.0.3'
+import { CustomerImport } from './CustomerImport'
 
 interface Customer {
   id: string
@@ -64,6 +65,7 @@ export function Customers({ user }: { user: any }) {
     phone: '',
     email: '',
     address: '',
+    addresses: [] as string[], // Multiple addresses support
     notes: ''
   })
 
@@ -82,7 +84,18 @@ export function Customers({ user }: { user: any }) {
   const loadCustomers = async () => {
     try {
       const result = await apiCall('/customers')
-      setCustomers(result.customers || [])
+      const allCustomers = result.customers || []
+      
+      // Remove duplicates by keeping only the first occurrence of each ID
+      const uniqueCustomers = allCustomers.filter((customer: Customer, index: number, self: Customer[]) => 
+        index === self.findIndex((c) => c.id === customer.id)
+      )
+      
+      if (allCustomers.length !== uniqueCustomers.length) {
+        console.warn(`⚠️ Removed ${allCustomers.length - uniqueCustomers.length} duplicate customers`)
+      }
+      
+      setCustomers(uniqueCustomers)
     } catch (error) {
       console.error('Error loading customers:', error)
     } finally {
@@ -198,6 +211,9 @@ export function Customers({ user }: { user: any }) {
     e.preventDefault()
 
     try {
+      // Filter out empty addresses
+      const validAddresses = formData.addresses.filter(addr => addr.trim() !== '')
+      
       const payload = {
         name: formData.name,
         type: formData.type,
@@ -206,6 +222,7 @@ export function Customers({ user }: { user: any }) {
           email: formData.email
         },
         address: formData.address,
+        addresses: validAddresses,
         notes: formData.notes
       }
 
@@ -239,6 +256,7 @@ export function Customers({ user }: { user: any }) {
       phone: customer.contactInfo?.phone || '',
       email: customer.contactInfo?.email || '',
       address: customer.address || '',
+      addresses: (customer as any).addresses || [],
       notes: customer.notes || ''
     })
     setIsDialogOpen(true)
@@ -266,6 +284,7 @@ export function Customers({ user }: { user: any }) {
       phone: '',
       email: '',
       address: '',
+      addresses: [] as string[], // Multiple addresses support
       notes: ''
     })
     setEditingCustomer(null)
@@ -637,96 +656,155 @@ export function Customers({ user }: { user: any }) {
           <p className="text-gray-500">{customers.length} müşteri kayıtlı</p>
         </div>
         {canEdit && (
-          <Dialog open={isDialogOpen} onOpenChange={(open) => {
-            setIsDialogOpen(open)
-            if (!open) resetForm()
-          }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Yeni Müşteri
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingCustomer ? 'Müşteriyi Düzenle' : 'Yeni Müşteri Ekle'}
-                </DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                <div className="grid grid-cols-2 gap-4">
+          <div className="flex gap-2">
+            <CustomerImport 
+              onImportComplete={loadCustomers}
+              user={user}
+            />
+            <Dialog open={isDialogOpen} onOpenChange={(open) => {
+              setIsDialogOpen(open)
+              if (!open) resetForm()
+            }}>
+              <DialogTrigger asChild>
+                <Button>
+                  <Plus className="h-4 w-4 mr-2" />
+                  Yeni Müşteri
+                </Button>
+              </DialogTrigger>
+              <DialogContent className="max-w-2xl">
+                <DialogHeader>
+                  <DialogTitle>
+                    {editingCustomer ? 'Müşteriyi Düzenle' : 'Yeni Müşteri Ekle'}
+                  </DialogTitle>
+                </DialogHeader>
+                <form onSubmit={handleSubmit} className="space-y-4">
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="name">Müşteri Adı *</Label>
+                      <Input
+                        id="name"
+                        value={formData.name}
+                        onChange={(e) => setFormData({ ...formData, name: e.target.value })}
+                        required
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="type">Müşteri Tipi</Label>
+                      <Select 
+                        value={formData.type}
+                        onValueChange={(value) => setFormData({ ...formData, type: value })}
+                      >
+                        <SelectTrigger>
+                          <SelectValue />
+                        </SelectTrigger>
+                        <SelectContent>
+                          <SelectItem value="normal">Normal Müşteri</SelectItem>
+                          <SelectItem value="regular">Düzenli Müşteri</SelectItem>
+                          <SelectItem value="problematic">Sıkıntılı Müşteri</SelectItem>
+                        </SelectContent>
+                      </Select>
+                    </div>
+                  </div>
+                  <div className="grid grid-cols-2 gap-4">
+                    <div className="space-y-2">
+                      <Label htmlFor="phone">Telefon</Label>
+                      <Input
+                        id="phone"
+                        value={formData.phone}
+                        onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                      />
+                    </div>
+                    <div className="space-y-2">
+                      <Label htmlFor="email">E-posta</Label>
+                      <Input
+                        id="email"
+                        type="email"
+                        value={formData.email}
+                        onChange={(e) => setFormData({ ...formData, email: e.target.value })}
+                      />
+                    </div>
+                  </div>
                   <div className="space-y-2">
-                    <Label htmlFor="name">Müşteri Adı *</Label>
-                    <Input
-                      id="name"
-                      value={formData.name}
-                      onChange={(e) => setFormData({ ...formData, name: e.target.value })}
-                      required
+                    <Label htmlFor="address">Ana Adres</Label>
+                    <Textarea
+                      id="address"
+                      value={formData.address}
+                      onChange={(e) => setFormData({ ...formData, address: e.target.value })}
+                      rows={2}
+                      placeholder="Ana/varsayılan adres..."
                     />
                   </div>
+                  
+                  {/* Additional Addresses */}
                   <div className="space-y-2">
-                    <Label htmlFor="type">Müşteri Tipi</Label>
-                    <Select 
-                      value={formData.type}
-                      onValueChange={(value) => setFormData({ ...formData, type: value })}
-                    >
-                      <SelectTrigger>
-                        <SelectValue />
-                      </SelectTrigger>
-                      <SelectContent>
-                        <SelectItem value="normal">Normal Müşteri</SelectItem>
-                        <SelectItem value="regular">Düzenli Müşteri</SelectItem>
-                        <SelectItem value="problematic">Sıkıntılı Müşteri</SelectItem>
-                      </SelectContent>
-                    </Select>
+                    <div className="flex items-center justify-between">
+                      <Label>Ek Adresler</Label>
+                      <Button
+                        type="button"
+                        variant="outline"
+                        size="sm"
+                        onClick={() => {
+                          setFormData({
+                            ...formData,
+                            addresses: [...formData.addresses, '']
+                          })
+                        }}
+                      >
+                        <Plus className="h-4 w-4 mr-1" />
+                        Adres Ekle
+                      </Button>
+                    </div>
+                    {formData.addresses.length > 0 && (
+                      <div className="space-y-2">
+                        {formData.addresses.map((addr, index) => (
+                          <div key={index} className="flex gap-2">
+                            <Textarea
+                              value={addr}
+                              onChange={(e) => {
+                                const newAddresses = [...formData.addresses]
+                                newAddresses[index] = e.target.value
+                                setFormData({ ...formData, addresses: newAddresses })
+                              }}
+                              rows={2}
+                              placeholder={`Ek adres ${index + 1}...`}
+                              className="flex-1"
+                            />
+                            <Button
+                              type="button"
+                              variant="outline"
+                              size="sm"
+                              onClick={() => {
+                                const newAddresses = formData.addresses.filter((_, i) => i !== index)
+                                setFormData({ ...formData, addresses: newAddresses })
+                              }}
+                            >
+                              <Trash2 className="h-4 w-4" />
+                            </Button>
+                          </div>
+                        ))}
+                      </div>
+                    )}
                   </div>
-                </div>
-                <div className="grid grid-cols-2 gap-4">
+                  
                   <div className="space-y-2">
-                    <Label htmlFor="phone">Telefon</Label>
-                    <Input
-                      id="phone"
-                      value={formData.phone}
-                      onChange={(e) => setFormData({ ...formData, phone: e.target.value })}
+                    <Label htmlFor="notes">Notlar</Label>
+                    <Textarea
+                      id="notes"
+                      value={formData.notes}
+                      onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
+                      rows={3}
                     />
                   </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="email">E-posta</Label>
-                    <Input
-                      id="email"
-                      type="email"
-                      value={formData.email}
-                      onChange={(e) => setFormData({ ...formData, email: e.target.value })}
-                    />
+                  <div className="flex justify-end gap-2">
+                    <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
+                      İptal
+                    </Button>
+                    <Button type="submit">Kaydet</Button>
                   </div>
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="address">Adres</Label>
-                  <Textarea
-                    id="address"
-                    value={formData.address}
-                    onChange={(e) => setFormData({ ...formData, address: e.target.value })}
-                    rows={2}
-                  />
-                </div>
-                <div className="space-y-2">
-                  <Label htmlFor="notes">Notlar</Label>
-                  <Textarea
-                    id="notes"
-                    value={formData.notes}
-                    onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
-                    rows={3}
-                  />
-                </div>
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => setIsDialogOpen(false)}>
-                    İptal
-                  </Button>
-                  <Button type="submit">Kaydet</Button>
-                </div>
-              </form>
-            </DialogContent>
-          </Dialog>
+                </form>
+              </DialogContent>
+            </Dialog>
+          </div>
         )}
       </div>
 

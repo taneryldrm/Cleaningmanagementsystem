@@ -1,19 +1,21 @@
-import { useEffect, useState } from 'react'
-import { apiCall } from '../utils/supabase/client'
+import { useState, useEffect } from 'react'
 import { Button } from './ui/button'
-import { Input } from './ui/input'
-import { Label } from './ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from './ui/dialog'
+import { Input } from './ui/input'
+import { Label } from './ui/label'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 import { Badge } from './ui/badge'
-import { Plus, Calendar, CheckCircle, Clock, Edit, Trash2, Search, UserPlus, Users, AlertCircle } from 'lucide-react'
+import { Plus, Edit, Trash2, Calendar, Users, Search, UserPlus, AlertCircle, Copy } from 'lucide-react'
+import { apiCall } from '../utils/supabase/client'
 import { Textarea } from './ui/textarea'
 import { toast } from 'sonner@2.0.3'
+import { WorkOrderImport } from './WorkOrderImport'
 
 interface WorkOrder {
   id: string
   customerId: string
+  customerAddress?: string
   personnelIds: string[]
   date: string
   description: string
@@ -44,6 +46,7 @@ export function WorkOrders({ user }: { user: any }) {
 
   const [formData, setFormData] = useState({
     customerId: '',
+    customerAddress: '',
     personnelIds: [] as string[],
     personnelCount: '1',
     date: '',
@@ -120,6 +123,7 @@ export function WorkOrders({ user }: { user: any }) {
       if (formData.isRecurring && !editingOrder) {
         const payload = {
           customerId: formData.customerId,
+          customerAddress: formData.customerAddress,
           personnelIds: formData.personnelIds,
           startDate: formData.date,
           description: formData.description,
@@ -143,6 +147,7 @@ export function WorkOrders({ user }: { user: any }) {
       } else {
         const payload = {
           customerId: formData.customerId,
+          customerAddress: formData.customerAddress,
           personnelIds: formData.personnelIds,
           date: formData.date,
           description: formData.description,
@@ -181,6 +186,7 @@ export function WorkOrders({ user }: { user: any }) {
     setEditingOrder(order)
     setFormData({
       customerId: order.customerId,
+      customerAddress: order.customerAddress || '',
       personnelIds: order.personnelIds || [],
       personnelCount: (order.personnelIds?.length || 1).toString(),
       date: order.date?.split('T')[0] || '',
@@ -216,9 +222,62 @@ export function WorkOrders({ user }: { user: any }) {
     }
   }
 
+  const handleCleanupDuplicates = async () => {
+    if (!confirm('⚠️ UYARI: Aynı müşteriye, aynı tarihte, aynı tutarda birden fazla iş emri varsa kopyaları silinecek. Bu işlem geri alınamaz. Devam etmek istiyor musunuz?')) {
+      return
+    }
+
+    try {
+      toast.info('Duplicate kayıtlar aranıyor...')
+      
+      const result = await apiCall('/work-orders/cleanup-duplicates', {
+        method: 'POST'
+      })
+      
+      if (result.deletedWorkOrders > 0) {
+        toast.success(`✅ ${result.deletedWorkOrders} duplicate iş emri silindi!\n${result.deletedTransactions} işlem + ${result.deletedCollections} tahsilat kaydı temizlendi`)
+        loadData()
+      } else {
+        toast.info('Duplicate iş emri bulunamadı')
+      }
+    } catch (error: any) {
+      console.error('Error cleaning duplicates:', error)
+      toast.error(error.message || 'Temizlik sırasında hata oluştu')
+    }
+  }
+
+  const handleDeleteAll = async () => {
+    const firstConfirm = confirm('🚨 TEHLİKELİ İŞLEM: TÜM İŞ EMİRLERİ SİLİNECEK!\n\nBu işlem:\n• Tüm iş emirlerini\n• İlgili tüm gelir kayıtlarını\n• İlgili tüm tahsilat kayıtlarını\n\nKALICI OLARAK siler. Bu işlem GERİ ALINAMAZ!\n\nDevam etmek istiyor musunuz?')
+    
+    if (!firstConfirm) {
+      return
+    }
+
+    const secondConfirm = confirm('⚠️ SON UYARI!\n\nTüm iş emirlerini silmek üzeresiniz. Bu işlem geri alınamaz!\n\nEMİN MİSİNİZ?')
+    
+    if (!secondConfirm) {
+      return
+    }
+
+    try {
+      toast.info('Tüm iş emirleri siliniyor...')
+      
+      const result = await apiCall('/work-orders/delete-all', {
+        method: 'POST'
+      })
+      
+      toast.success(`✅ ${result.deletedWorkOrders} iş emri, ${result.deletedTransactions} işlem ve ${result.deletedCollections} tahsilat kaydı silindi`)
+      loadData()
+    } catch (error: any) {
+      console.error('Error deleting all work orders:', error)
+      toast.error(error.message || 'Silme işlemi sırasında hata oluştu')
+    }
+  }
+
   const resetForm = () => {
     setFormData({
       customerId: '',
+      customerAddress: '',
       personnelIds: [],
       personnelCount: '1',
       date: '',
@@ -354,396 +413,476 @@ export function WorkOrders({ user }: { user: any }) {
           <h1>İş Emirleri</h1>
           <p className="text-gray-500">{workOrders.length} iş emri</p>
         </div>
-        {canEdit && (
-          <Dialog open={isDialogOpen} onOpenChange={(open) => {
-            setIsDialogOpen(open)
-            if (!open) resetForm()
-          }}>
-            <DialogTrigger asChild>
-              <Button>
-                <Plus className="h-4 w-4 mr-2" />
-                Yeni İş Emri
-              </Button>
-            </DialogTrigger>
-            <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
-              <DialogHeader>
-                <DialogTitle>
-                  {editingOrder ? 'İş Emrini Düzenle' : 'Yeni İş Emri Oluştur'}
-                </DialogTitle>
-              </DialogHeader>
-              <form onSubmit={handleSubmit} className="space-y-4">
-                {/* Müşteri Seçimi veya Yeni Müşteri */}
-                <div className="space-y-2">
-                  <Label>Müşteri *</Label>
-                  {!showNewCustomerForm ? (
+        <div className="flex gap-2">
+          {canEdit && (
+            <>
+              {userRole === 'admin' && (
+                <>
+                  <Button 
+                    variant="outline"
+                    onClick={handleDeleteAll}
+                    className="border-red-500 text-red-700 hover:bg-red-100"
+                  >
+                    <Trash2 className="h-4 w-4 mr-2" />
+                    Tümünü Sil
+                  </Button>
+                  <Button 
+                    variant="outline"
+                    onClick={handleCleanupDuplicates}
+                    className="border-red-200 text-red-700 hover:bg-red-50"
+                  >
+                    <Copy className="h-4 w-4 mr-2" />
+                    Duplicate Temizle
+                  </Button>
+                </>
+              )}
+              <WorkOrderImport 
+                onImportComplete={loadData}
+                customers={customers}
+                personnel={personnel}
+              />
+              <Dialog open={isDialogOpen} onOpenChange={(open) => {
+                setIsDialogOpen(open)
+                if (!open) resetForm()
+              }}>
+                <DialogTrigger asChild>
+                  <Button>
+                    <Plus className="h-4 w-4 mr-2" />
+                    Yeni İş Emri
+                  </Button>
+                </DialogTrigger>
+                <DialogContent className="max-w-2xl max-h-[90vh] overflow-y-auto">
+                  <DialogHeader>
+                    <DialogTitle>
+                      {editingOrder ? 'İş Emrini Düzenle' : 'Yeni İş Emri Oluştur'}
+                    </DialogTitle>
+                  </DialogHeader>
+                  <form onSubmit={handleSubmit} className="space-y-4">
+                    {/* Müşteri Seçimi veya Yeni Müşteri */}
                     <div className="space-y-2">
-                      <div className="relative">
-                        <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
-                        <Input
-                          placeholder="Müşteri adı veya telefon numarası ile ara..."
-                          value={searchQuery}
-                          onChange={(e) => setSearchQuery(e.target.value)}
-                          className="pl-10"
-                        />
-                      </div>
-                      <Select 
-                        value={formData.customerId}
-                        onValueChange={(value) => setFormData({ ...formData, customerId: value })}
-                      >
-                        <SelectTrigger>
-                          <SelectValue placeholder="Müşteri seçin" />
-                        </SelectTrigger>
-                        <SelectContent>
-                          {filteredCustomers.length > 0 ? (
-                            filteredCustomers.map(customer => (
-                              <SelectItem key={customer.id} value={customer.id}>
-                                {customer.name} {customer.contactInfo?.phone && `(${customer.contactInfo.phone})`}
-                              </SelectItem>
-                            ))
-                          ) : (
-                            <SelectItem value="no-results" disabled>
-                              Sonuç bulunamadı
-                            </SelectItem>
-                          )}
-                        </SelectContent>
-                      </Select>
-                      <Button
-                        type="button"
-                        variant="outline"
-                        onClick={() => setShowNewCustomerForm(true)}
-                        className="w-full"
-                      >
-                        <UserPlus className="h-4 w-4 mr-2" />
-                        Yeni Müşteri Oluştur
-                      </Button>
-                    </div>
-                  ) : (
-                    <Card className="p-4 space-y-3 bg-blue-50 border-blue-200">
-                      <div className="flex items-center justify-between">
-                        <h3 className="font-medium">Yeni Müşteri</h3>
-                        <Button
-                          type="button"
-                          variant="ghost"
-                          size="sm"
-                          onClick={() => setShowNewCustomerForm(false)}
-                        >
-                          İptal
-                        </Button>
-                      </div>
-                      <div className="space-y-2">
-                        <Input
-                          placeholder="Müşteri Adı *"
-                          value={newCustomerData.name}
-                          onChange={(e) => setNewCustomerData({ ...newCustomerData, name: e.target.value })}
-                        />
-                        <Input
-                          placeholder="Telefon *"
-                          value={newCustomerData.phone}
-                          onChange={(e) => setNewCustomerData({ ...newCustomerData, phone: e.target.value })}
-                        />
-                        <Input
-                          placeholder="Adres (Opsiyonel)"
-                          value={newCustomerData.address}
-                          onChange={(e) => setNewCustomerData({ ...newCustomerData, address: e.target.value })}
-                        />
-                        <Select
-                          value={newCustomerData.type}
-                          onValueChange={(value: any) => setNewCustomerData({ ...newCustomerData, type: value })}
-                        >
-                          <SelectTrigger>
-                            <SelectValue />
-                          </SelectTrigger>
-                          <SelectContent>
-                            <SelectItem value="normal">Normal</SelectItem>
-                            <SelectItem value="regular">Düzenli</SelectItem>
-                            <SelectItem value="problematic">Sıkıntılı</SelectItem>
-                          </SelectContent>
-                        </Select>
-                      </div>
-                      <Button
-                        type="button"
-                        onClick={handleCreateNewCustomer}
-                        className="w-full"
-                      >
-                        Müşteri Oluştur ve Seç
-                      </Button>
-                    </Card>
-                  )}
-                </div>
-
-                {/* Tarih ve Eleman Sayısı */}
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="date">{formData.isRecurring ? 'Başlangıç Tarihi *' : 'Tarih *'}</Label>
-                    <Input
-                      id="date"
-                      type="date"
-                      value={formData.date}
-                      onChange={(e) => setFormData({ ...formData, date: e.target.value })}
-                      required
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="personnelCount">
-                      <Users className="h-4 w-4 inline mr-1" />
-                      Eleman Sayısı
-                    </Label>
-                    <Input
-                      id="personnelCount"
-                      type="number"
-                      min="1"
-                      value={formData.personnelCount}
-                      onChange={(e) => setFormData({ ...formData, personnelCount: e.target.value })}
-                    />
-                  </div>
-                </div>
-
-                {/* Personel Seçimi */}
-                <div className="space-y-2">
-                  <Label>Personel Ata (Temizlikçiler)</Label>
-                  <div className="border rounded-md p-3 space-y-2 max-h-64 overflow-y-auto">
-                    {personnel.filter(p => p.role === 'cleaner').map(person => {
-                      const otherAssignments = getPersonnelAssignmentsOnDate(person.id, formData.date)
-                      const hasOtherJobs = otherAssignments.length > 0
-                      
-                      return (
-                        <label 
-                          key={person.id} 
-                          className="flex items-start gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
-                        >
-                          <input
-                            type="checkbox"
-                            checked={formData.personnelIds.includes(person.id)}
-                            onChange={(e) => {
-                              if (e.target.checked) {
-                                setFormData({
-                                  ...formData,
-                                  personnelIds: [...formData.personnelIds, person.id]
-                                })
-                              } else {
-                                setFormData({
-                                  ...formData,
-                                  personnelIds: formData.personnelIds.filter(id => id !== person.id)
-                                })
+                      <Label>Müşteri *</Label>
+                      {!showNewCustomerForm ? (
+                        <div className="space-y-2">
+                          <div className="relative">
+                            <Search className="absolute left-3 top-1/2 transform -translate-y-1/2 h-4 w-4 text-gray-400" />
+                            <Input
+                              placeholder="Müşteri adı veya telefon numarası ile ara..."
+                              value={searchQuery}
+                              onChange={(e) => setSearchQuery(e.target.value)}
+                              className="pl-10"
+                            />
+                          </div>
+                          <Select 
+                            value={formData.customerId}
+                            onValueChange={(value) => {
+                              setFormData({ ...formData, customerId: value })
+                              // Auto-fill address when customer is selected
+                              const selectedCustomer = customers.find(c => c.id === value)
+                              if (selectedCustomer) {
+                                setFormData(prev => ({ 
+                                  ...prev, 
+                                  customerId: value,
+                                  customerAddress: selectedCustomer.address || '' 
+                                }))
                               }
                             }}
-                            className="rounded mt-1"
-                          />
-                          <div className="flex-1">
-                            <div>{person.name}</div>
-                            {hasOtherJobs && (
-                              <div className="flex items-start gap-1 mt-1 text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded">
-                                <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
-                                <span>
-                                  Bugün şu müşterilerde de çalışıyor: {otherAssignments.join(', ')}
-                                </span>
-                              </div>
-                            )}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Müşteri seçin" />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {filteredCustomers.length > 0 ? (
+                                filteredCustomers.map(customer => (
+                                  <SelectItem key={customer.id} value={customer.id}>
+                                    {customer.name} {customer.contactInfo?.phone && `(${customer.contactInfo.phone})`}
+                                  </SelectItem>
+                                ))
+                              ) : (
+                                <SelectItem value="no-results" disabled>
+                                  Sonuç bulunamadı
+                                </SelectItem>
+                              )}
+                            </SelectContent>
+                          </Select>
+                          <Button
+                            type="button"
+                            variant="outline"
+                            onClick={() => setShowNewCustomerForm(true)}
+                            className="w-full"
+                          >
+                            <UserPlus className="h-4 w-4 mr-2" />
+                            Yeni Müşteri Oluştur
+                          </Button>
+                        </div>
+                      ) : (
+                        <Card className="p-4 space-y-3 bg-blue-50 border-blue-200">
+                          <div className="flex items-center justify-between">
+                            <h3 className="font-medium">Yeni Müşteri</h3>
+                            <Button
+                              type="button"
+                              variant="ghost"
+                              size="sm"
+                              onClick={() => setShowNewCustomerForm(false)}
+                            >
+                              İptal
+                            </Button>
                           </div>
-                        </label>
-                      )
-                    })}
-                  </div>
-                </div>
-
-                <div className="space-y-2">
-                  <Label htmlFor="description">Açıklama</Label>
-                  <Textarea
-                    id="description"
-                    value={formData.description}
-                    onChange={(e) => setFormData({ ...formData, description: e.target.value })}
-                    rows={3}
-                  />
-                </div>
-
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="space-y-2">
-                    <Label htmlFor="totalAmount">Toplam Tutar (TL)</Label>
-                    <Input
-                      id="totalAmount"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.totalAmount}
-                      onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
-                      placeholder="0.00"
-                    />
-                  </div>
-                  <div className="space-y-2">
-                    <Label htmlFor="paidAmount">Ödenen Tutar (TL)</Label>
-                    <Input
-                      id="paidAmount"
-                      type="number"
-                      step="0.01"
-                      min="0"
-                      value={formData.paidAmount}
-                      onChange={(e) => setFormData({ ...formData, paidAmount: e.target.value })}
-                      placeholder="0.00"
-                    />
-                  </div>
-                </div>
-
-                <div className="flex items-center gap-2">
-                  <input
-                    type="checkbox"
-                    id="autoApprove"
-                    checked={formData.autoApprove}
-                    onChange={(e) => setFormData({ ...formData, autoApprove: e.target.checked })}
-                    className="rounded"
-                  />
-                  <Label htmlFor="autoApprove" className="cursor-pointer">
-                    Otomatik onayla (Taslak olarak kaydetme)
-                  </Label>
-                </div>
-
-                {!editingOrder && (
-                  <>
-                    <div className="border-t pt-4">
-                      <div className="flex items-center gap-2 mb-4">
-                        <input
-                          type="checkbox"
-                          id="isRecurring"
-                          checked={formData.isRecurring}
-                          onChange={(e) => setFormData({ ...formData, isRecurring: e.target.checked })}
-                          className="rounded"
-                        />
-                        <Label htmlFor="isRecurring" className="cursor-pointer">
-                          🔁 Tekrarlayan İş Emri (Düzenli müşteri için otomatik iş emirleri oluştur)
-                        </Label>
-                      </div>
-
-                      {formData.isRecurring && (
-                        <div className="space-y-4 bg-blue-50 p-4 rounded-md">
                           <div className="space-y-2">
-                            <Label htmlFor="recurrenceType">Sıklık</Label>
-                            <Select 
-                              value={formData.recurrenceType}
-                              onValueChange={(value: any) => setFormData({ ...formData, recurrenceType: value })}
+                            <Input
+                              placeholder="Müşteri Adı *"
+                              value={newCustomerData.name}
+                              onChange={(e) => setNewCustomerData({ ...newCustomerData, name: e.target.value })}
+                            />
+                            <Input
+                              placeholder="Telefon *"
+                              value={newCustomerData.phone}
+                              onChange={(e) => setNewCustomerData({ ...newCustomerData, phone: e.target.value })}
+                            />
+                            <Input
+                              placeholder="Adres (Opsiyonel)"
+                              value={newCustomerData.address}
+                              onChange={(e) => setNewCustomerData({ ...newCustomerData, address: e.target.value })}
+                            />
+                            <Select
+                              value={newCustomerData.type}
+                              onValueChange={(value: any) => setNewCustomerData({ ...newCustomerData, type: value })}
                             >
                               <SelectTrigger>
                                 <SelectValue />
                               </SelectTrigger>
                               <SelectContent>
-                                <SelectItem value="weekly">Her Hafta</SelectItem>
-                                <SelectItem value="biweekly">İki Haftada Bir</SelectItem>
-                                <SelectItem value="monthly-date">Her Ayın Belirli Günü</SelectItem>
-                                <SelectItem value="monthly-weekday">Her Ayın Belirli Haftası</SelectItem>
+                                <SelectItem value="normal">Normal</SelectItem>
+                                <SelectItem value="regular">Düzenli</SelectItem>
+                                <SelectItem value="problematic">Sıkıntılı</SelectItem>
                               </SelectContent>
                             </Select>
                           </div>
-                          
-                          {(formData.recurrenceType === 'weekly' || formData.recurrenceType === 'biweekly') && (
-                            <div className="space-y-2">
-                              <Label htmlFor="recurrenceDay">Hangi Gün</Label>
-                              <Select 
-                                value={formData.recurrenceDay.toString()}
-                                onValueChange={(value) => setFormData({ ...formData, recurrenceDay: parseInt(value) })}
-                              >
-                                <SelectTrigger>
-                                  <SelectValue />
-                                </SelectTrigger>
-                                <SelectContent>
-                                  <SelectItem value="0">Pazar</SelectItem>
-                                  <SelectItem value="1">Pazartesi</SelectItem>
-                                  <SelectItem value="2">Salı</SelectItem>
-                                  <SelectItem value="3">Çarşamba</SelectItem>
-                                  <SelectItem value="4">Perşembe</SelectItem>
-                                  <SelectItem value="5">Cuma</SelectItem>
-                                  <SelectItem value="6">Cumartesi</SelectItem>
-                                </SelectContent>
-                              </Select>
-                            </div>
-                          )}
-
-                          {formData.recurrenceType === 'monthly-date' && (
-                            <div className="space-y-2">
-                              <Label htmlFor="recurrenceDate">Ayın Hangi Günü (1-31)</Label>
-                              <Input
-                                id="recurrenceDate"
-                                type="number"
-                                min="1"
-                                max="31"
-                                value={formData.recurrenceDate}
-                                onChange={(e) => setFormData({ ...formData, recurrenceDate: parseInt(e.target.value) })}
-                              />
-                            </div>
-                          )}
-
-                          {formData.recurrenceType === 'monthly-weekday' && (
-                            <div className="grid grid-cols-2 gap-4">
-                              <div className="space-y-2">
-                                <Label htmlFor="recurrenceWeek">Hangi Hafta</Label>
-                                <Select 
-                                  value={formData.recurrenceWeek.toString()}
-                                  onValueChange={(value) => setFormData({ ...formData, recurrenceWeek: parseInt(value) })}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="1">İlk Hafta</SelectItem>
-                                    <SelectItem value="2">İkinci Hafta</SelectItem>
-                                    <SelectItem value="3">Üçüncü Hafta</SelectItem>
-                                    <SelectItem value="4">Dördüncü Hafta</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                              <div className="space-y-2">
-                                <Label htmlFor="recurrenceWeekday">Hangi Gün</Label>
-                                <Select 
-                                  value={formData.recurrenceWeekday.toString()}
-                                  onValueChange={(value) => setFormData({ ...formData, recurrenceWeekday: parseInt(value) })}
-                                >
-                                  <SelectTrigger>
-                                    <SelectValue />
-                                  </SelectTrigger>
-                                  <SelectContent>
-                                    <SelectItem value="0">Pazar</SelectItem>
-                                    <SelectItem value="1">Pazartesi</SelectItem>
-                                    <SelectItem value="2">Salı</SelectItem>
-                                    <SelectItem value="3">Çarşamba</SelectItem>
-                                    <SelectItem value="4">Perşembe</SelectItem>
-                                    <SelectItem value="5">Cuma</SelectItem>
-                                    <SelectItem value="6">Cumartesi</SelectItem>
-                                  </SelectContent>
-                                </Select>
-                              </div>
-                            </div>
-                          )}
-
-                          <div className="space-y-2">
-                            <Label htmlFor="endDate">Bitiş Tarihi (Son iş emri tarihi)</Label>
-                            <Input
-                              id="endDate"
-                              type="date"
-                              value={formData.endDate}
-                              onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
-                            />
-                            <p className="text-xs text-gray-500">
-                              Bu tarih dahil olmak üzere iş emirleri oluşturulacak
-                            </p>
-                          </div>
-                        </div>
+                          <Button
+                            type="button"
+                            onClick={handleCreateNewCustomer}
+                            className="w-full"
+                          >
+                            Müşteri Oluştur ve Seç
+                          </Button>
+                        </Card>
                       )}
                     </div>
-                  </>
-                )}
 
-                <div className="flex justify-end gap-2">
-                  <Button type="button" variant="outline" onClick={() => {
-                    setIsDialogOpen(false)
-                    resetForm()
-                  }}>
-                    İptal
-                  </Button>
-                  <Button type="submit">
-                    {editingOrder ? 'Güncelle' : formData.isRecurring ? 'Tekrarlayan İş Emirleri Oluştur' : 'Oluştur'}
-                  </Button>
-                </div>
-              </form>
-            </DialogContent>
-          </Dialog>
-        )}
+                    {/* Tarih ve Eleman Sayısı */}
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="date">{formData.isRecurring ? 'Başlangıç Tarihi *' : 'Tarih *'}</Label>
+                        <Input
+                          id="date"
+                          type="date"
+                          value={formData.date}
+                          onChange={(e) => setFormData({ ...formData, date: e.target.value })}
+                          required
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="personnelCount">
+                          <Users className="h-4 w-4 inline mr-1" />
+                          Eleman Sayısı
+                        </Label>
+                        <Input
+                          id="personnelCount"
+                          type="number"
+                          min="1"
+                          value={formData.personnelCount}
+                          onChange={(e) => setFormData({ ...formData, personnelCount: e.target.value })}
+                        />
+                      </div>
+                    </div>
+
+                    {/* Personel Seçimi */}
+                    <div className="space-y-2">
+                      <Label>Personel Ata (Temizlikçiler)</Label>
+                      <div className="border rounded-md p-3 space-y-2 max-h-64 overflow-y-auto">
+                        {personnel.filter(p => p.role === 'cleaner').map(person => {
+                          const otherAssignments = getPersonnelAssignmentsOnDate(person.id, formData.date)
+                          const hasOtherJobs = otherAssignments.length > 0
+                          
+                          return (
+                            <label 
+                              key={person.id} 
+                              className="flex items-start gap-2 cursor-pointer hover:bg-gray-50 p-2 rounded"
+                            >
+                              <input
+                                type="checkbox"
+                                checked={formData.personnelIds.includes(person.id)}
+                                onChange={(e) => {
+                                  if (e.target.checked) {
+                                    setFormData({
+                                      ...formData,
+                                      personnelIds: [...formData.personnelIds, person.id]
+                                    })
+                                  } else {
+                                    setFormData({
+                                      ...formData,
+                                      personnelIds: formData.personnelIds.filter(id => id !== person.id)
+                                    })
+                                  }
+                                }}
+                                className="rounded mt-1"
+                              />
+                              <div className="flex-1">
+                                <div>{person.name}</div>
+                                {hasOtherJobs && (
+                                  <div className="flex items-start gap-1 mt-1 text-xs text-amber-700 bg-amber-50 px-2 py-1 rounded">
+                                    <AlertCircle className="h-3 w-3 mt-0.5 flex-shrink-0" />
+                                    <span>
+                                      Bugün şu müşterilerde de çalışıyor: {otherAssignments.join(', ')}
+                                    </span>
+                                  </div>
+                                )}
+                              </div>
+                            </label>
+                          )
+                        })}
+                      </div>
+                    </div>
+
+                    {/* İş Adresi Seçimi */}
+                    {formData.customerId && (() => {
+                      const selectedCustomer = customers.find(c => c.id === formData.customerId)
+                      const allAddresses = []
+                      if (selectedCustomer?.address) {
+                        allAddresses.push({ value: selectedCustomer.address, label: `Ana Adres: ${selectedCustomer.address}`, isMain: true })
+                      }
+                      if ((selectedCustomer as any)?.addresses && (selectedCustomer as any).addresses.length > 0) {
+                        (selectedCustomer as any).addresses.forEach((addr: string, idx: number) => {
+                          if (addr.trim()) {
+                            allAddresses.push({ value: addr, label: `Adres ${idx + 2}: ${addr}`, isMain: false })
+                          }
+                        })
+                      }
+                      
+                      return allAddresses.length > 0 ? (
+                        <div className="space-y-2">
+                          <Label htmlFor="workAddress">📍 İş Adresi *</Label>
+                          <Select 
+                            value={formData.customerAddress}
+                            onValueChange={(value) => setFormData({ ...formData, customerAddress: value })}
+                          >
+                            <SelectTrigger>
+                              <SelectValue placeholder="Adres seçin..." />
+                            </SelectTrigger>
+                            <SelectContent>
+                              {allAddresses.map((addr, idx) => (
+                                <SelectItem key={idx} value={addr.value}>
+                                  {addr.label}
+                                </SelectItem>
+                              ))}
+                            </SelectContent>
+                          </Select>
+                          <p className="text-xs text-gray-500">
+                            {allAddresses.length} kayıtlı adres. Müşteriden farklı bir adres istenmişse Müşteri Yönetimi'nden ekleyebilirsiniz.
+                          </p>
+                        </div>
+                      ) : null
+                    })()}
+
+                    <div className="space-y-2">
+                      <Label htmlFor="description">Açıklama</Label>
+                      <Textarea
+                        id="description"
+                        value={formData.description}
+                        onChange={(e) => setFormData({ ...formData, description: e.target.value })}
+                        rows={3}
+                      />
+                    </div>
+
+                    <div className="grid grid-cols-2 gap-4">
+                      <div className="space-y-2">
+                        <Label htmlFor="totalAmount">Toplam Tutar (TL)</Label>
+                        <Input
+                          id="totalAmount"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={formData.totalAmount}
+                          onChange={(e) => setFormData({ ...formData, totalAmount: e.target.value })}
+                          placeholder="0.00"
+                        />
+                      </div>
+                      <div className="space-y-2">
+                        <Label htmlFor="paidAmount">Ödenen Tutar (TL)</Label>
+                        <Input
+                          id="paidAmount"
+                          type="number"
+                          step="0.01"
+                          min="0"
+                          value={formData.paidAmount}
+                          onChange={(e) => setFormData({ ...formData, paidAmount: e.target.value })}
+                          placeholder="0.00"
+                        />
+                      </div>
+                    </div>
+
+                    <div className="flex items-center gap-2">
+                      <input
+                        type="checkbox"
+                        id="autoApprove"
+                        checked={formData.autoApprove}
+                        onChange={(e) => setFormData({ ...formData, autoApprove: e.target.checked })}
+                        className="rounded"
+                      />
+                      <Label htmlFor="autoApprove" className="cursor-pointer">
+                        Otomatik onayla (Taslak olarak kaydetme)
+                      </Label>
+                    </div>
+
+                    {!editingOrder && (
+                      <>
+                        <div className="border-t pt-4">
+                          <div className="flex items-center gap-2 mb-4">
+                            <input
+                              type="checkbox"
+                              id="isRecurring"
+                              checked={formData.isRecurring}
+                              onChange={(e) => setFormData({ ...formData, isRecurring: e.target.checked })}
+                              className="rounded"
+                            />
+                            <Label htmlFor="isRecurring" className="cursor-pointer">
+                              🔁 Tekrarlayan İş Emri (Düzenli müşteri için otomatik iş emirleri oluştur)
+                            </Label>
+                          </div>
+
+                          {formData.isRecurring && (
+                            <div className="space-y-4 bg-blue-50 p-4 rounded-md">
+                              <div className="space-y-2">
+                                <Label htmlFor="recurrenceType">Sıklık</Label>
+                                <Select 
+                                  value={formData.recurrenceType}
+                                  onValueChange={(value: any) => setFormData({ ...formData, recurrenceType: value })}
+                                >
+                                  <SelectTrigger>
+                                    <SelectValue />
+                                  </SelectTrigger>
+                                  <SelectContent>
+                                    <SelectItem value="weekly">Her Hafta</SelectItem>
+                                    <SelectItem value="biweekly">İki Haftada Bir</SelectItem>
+                                    <SelectItem value="monthly-date">Her Ayın Belirli Günü</SelectItem>
+                                    <SelectItem value="monthly-weekday">Her Ayın Belirli Haftası</SelectItem>
+                                  </SelectContent>
+                                </Select>
+                              </div>
+                              
+                              {(formData.recurrenceType === 'weekly' || formData.recurrenceType === 'biweekly') && (
+                                <div className="space-y-2">
+                                  <Label htmlFor="recurrenceDay">Hangi Gün</Label>
+                                  <Select 
+                                    value={formData.recurrenceDay.toString()}
+                                    onValueChange={(value) => setFormData({ ...formData, recurrenceDay: parseInt(value) })}
+                                  >
+                                    <SelectTrigger>
+                                      <SelectValue />
+                                    </SelectTrigger>
+                                    <SelectContent>
+                                      <SelectItem value="0">Pazar</SelectItem>
+                                      <SelectItem value="1">Pazartesi</SelectItem>
+                                      <SelectItem value="2">Salı</SelectItem>
+                                      <SelectItem value="3">Çarşamba</SelectItem>
+                                      <SelectItem value="4">Perşembe</SelectItem>
+                                      <SelectItem value="5">Cuma</SelectItem>
+                                      <SelectItem value="6">Cumartesi</SelectItem>
+                                    </SelectContent>
+                                  </Select>
+                                </div>
+                              )}
+
+                              {formData.recurrenceType === 'monthly-date' && (
+                                <div className="space-y-2">
+                                  <Label htmlFor="recurrenceDate">Ayın Hangi Günü (1-31)</Label>
+                                  <Input
+                                    id="recurrenceDate"
+                                    type="number"
+                                    min="1"
+                                    max="31"
+                                    value={formData.recurrenceDate}
+                                    onChange={(e) => setFormData({ ...formData, recurrenceDate: parseInt(e.target.value) })}
+                                  />
+                                </div>
+                              )}
+
+                              {formData.recurrenceType === 'monthly-weekday' && (
+                                <div className="grid grid-cols-2 gap-4">
+                                  <div className="space-y-2">
+                                    <Label htmlFor="recurrenceWeek">Hangi Hafta</Label>
+                                    <Select 
+                                      value={formData.recurrenceWeek.toString()}
+                                      onValueChange={(value) => setFormData({ ...formData, recurrenceWeek: parseInt(value) })}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="1">İlk Hafta</SelectItem>
+                                        <SelectItem value="2">İkinci Hafta</SelectItem>
+                                        <SelectItem value="3">Üçüncü Hafta</SelectItem>
+                                        <SelectItem value="4">Dördüncü Hafta</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                  <div className="space-y-2">
+                                    <Label htmlFor="recurrenceWeekday">Hangi Gün</Label>
+                                    <Select 
+                                      value={formData.recurrenceWeekday.toString()}
+                                      onValueChange={(value) => setFormData({ ...formData, recurrenceWeekday: parseInt(value) })}
+                                    >
+                                      <SelectTrigger>
+                                        <SelectValue />
+                                      </SelectTrigger>
+                                      <SelectContent>
+                                        <SelectItem value="0">Pazar</SelectItem>
+                                        <SelectItem value="1">Pazartesi</SelectItem>
+                                        <SelectItem value="2">Salı</SelectItem>
+                                        <SelectItem value="3">Çarşamba</SelectItem>
+                                        <SelectItem value="4">Perşembe</SelectItem>
+                                        <SelectItem value="5">Cuma</SelectItem>
+                                        <SelectItem value="6">Cumartesi</SelectItem>
+                                      </SelectContent>
+                                    </Select>
+                                  </div>
+                                </div>
+                              )}
+
+                              <div className="space-y-2">
+                                <Label htmlFor="endDate">Bitiş Tarihi (Son iş emri tarihi)</Label>
+                                <Input
+                                  id="endDate"
+                                  type="date"
+                                  value={formData.endDate}
+                                  onChange={(e) => setFormData({ ...formData, endDate: e.target.value })}
+                                />
+                                <p className="text-xs text-gray-500">
+                                  Bu tarih dahil olmak üzere iş emirleri oluşturulacak
+                                </p>
+                              </div>
+                            </div>
+                          )}
+                        </div>
+                      </>
+                    )}
+
+                    <div className="flex justify-end gap-2">
+                      <Button type="button" variant="outline" onClick={() => {
+                        setIsDialogOpen(false)
+                        resetForm()
+                      }}>
+                        İptal
+                      </Button>
+                      <Button type="submit">
+                        {editingOrder ? 'Güncelle' : formData.isRecurring ? 'Tekrarlayan İş Emirleri Oluştur' : 'Oluştur'}
+                      </Button>
+                    </div>
+                  </form>
+                </DialogContent>
+              </Dialog>
+            </>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-4">
@@ -787,6 +926,7 @@ export function WorkOrders({ user }: { user: any }) {
                         </div>
                         <div className="text-sm text-gray-600 space-y-1">
                           <p><strong>Personel:</strong> {getPersonnelNames(order.personnelIds)}</p>
+                          {order.customerAddress && <p><strong>Adres:</strong> {order.customerAddress}</p>}
                           {order.description && <p><strong>Açıklama:</strong> {order.description}</p>}
                           <p><strong>Tutar:</strong> {order.totalAmount?.toFixed(2)} TL</p>
                           <p><strong>Ödenen:</strong> {order.paidAmount?.toFixed(2)} TL</p>

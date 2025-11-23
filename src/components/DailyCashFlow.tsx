@@ -5,7 +5,7 @@ import { Input } from './ui/input'
 import { Label } from './ui/label'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
-import { Calendar, Edit, Plus, Trash2 } from 'lucide-react'
+import { Calendar, Edit, Plus, Trash2, Printer } from 'lucide-react'
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from './ui/select'
 
 interface Customer {
@@ -269,6 +269,241 @@ export function DailyCashFlow({ user }: { user: any }) {
     setEditingExpense(null)
   }
 
+  const formatDate = (dateStr: string) => {
+    const date = new Date(dateStr)
+    return date.toLocaleDateString('tr-TR', {
+      weekday: 'long',
+      year: 'numeric',
+      month: 'long',
+      day: 'numeric'
+    })
+  }
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+    
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Günlük Nakit Akışı - ${formatDate(selectedDate)}</title>
+          <style>
+            @page {
+              size: A4 landscape;
+              margin: 15mm;
+            }
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: Arial, sans-serif;
+              font-size: 8pt;
+              line-height: 1.2;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 15px;
+              border-bottom: 2px solid #000;
+              padding-bottom: 10px;
+            }
+            .header h1 {
+              font-size: 14pt;
+              margin-bottom: 5px;
+            }
+            .header p {
+              font-size: 9pt;
+              color: #333;
+              margin: 2px 0;
+            }
+            .two-column {
+              display: grid;
+              grid-template-columns: 1fr 1fr;
+              gap: 15px;
+              margin-top: 15px;
+            }
+            .section {
+              border: 1px solid #000;
+            }
+            .section-title {
+              background: #333;
+              color: white;
+              padding: 6px;
+              font-weight: bold;
+              font-size: 9pt;
+              text-align: center;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+            }
+            th, td {
+              border: 1px solid #666;
+              padding: 4px 3px;
+              text-align: left;
+              vertical-align: top;
+            }
+            th {
+              background: #e8e8e8;
+              font-weight: bold;
+              font-size: 7pt;
+              text-align: center;
+            }
+            .text-right { text-align: right; }
+            .text-center { text-align: center; }
+            .summary-row {
+              background: #fff9c4;
+              font-weight: bold;
+              font-size: 8pt;
+            }
+            .total-row {
+              background: #bbdefb;
+              font-weight: bold;
+              font-size: 8pt;
+            }
+            .card-payment {
+              background: #f3e5f5;
+            }
+            .auto-record {
+              color: #1976d2;
+              font-size: 7pt;
+            }
+            @media print {
+              body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>UÇANLAR TEMİZLİK - GÜNLÜK NAKİT AKIŞI</h1>
+            <p>${formatDate(selectedDate)}</p>
+            <p>Yazdırma: ${new Date().toLocaleDateString('tr-TR', { 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}</p>
+          </div>
+
+          <div class="two-column">
+            <!-- Left Column: Customer Collections -->
+            <div class="section">
+              <div class="section-title">GÜNLÜK MÜŞTERİ TAHSİLAT</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 30px;">SIRA</th>
+                    <th style="width: 25%;">MÜŞTERİ İSMİ</th>
+                    <th style="width: 20%;">AÇIKLAMA</th>
+                    <th style="width: 15%;">İŞ TARİHİ</th>
+                    <th style="width: 18%;">TAHSİLAT</th>
+                    <th style="width: 12%;">KAYDEDEN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${[...Array(15)].map((_, idx) => {
+                    const collection = collections[idx]
+                    return `
+                      <tr>
+                        <td class="text-center">${idx + 1}</td>
+                        <td>${collection?.customerName || ''}</td>
+                        <td style="font-style: italic; color: #666;">
+                          ${collection?.description || ''}
+                          ${collection?.relatedWorkOrderId ? '<span class="auto-record">🔒</span>' : ''}
+                        </td>
+                        <td>${collection?.workDate ? new Date(collection.workDate).toLocaleDateString('tr-TR') : ''}</td>
+                        <td class="text-right">${collection ? collection.amount.toLocaleString('tr-TR') : '0'}</td>
+                        <td style="font-size: 7pt;">${collection?.createdByName || ''}</td>
+                      </tr>
+                    `
+                  }).join('')}
+                  <tr class="summary-row">
+                    <td colspan="4">BUGÜN TAHSİLAT TOPLAMI</td>
+                    <td class="text-right">${summary.totalCollection.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                  <tr class="summary-row">
+                    <td colspan="4">BUGÜN ÖDENEN YÖMİYELER TOPLAMI</td>
+                    <td class="text-right">${summary.totalWagesPaid.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                  <tr class="summary-row">
+                    <td colspan="4">GEÇEN AY KASA DEVRİ</td>
+                    <td class="text-right">${summary.previousMonthCash.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                  <tr class="total-row">
+                    <td colspan="4">BUGÜN KASA TOPLAMI</td>
+                    <td class="text-right">${summary.todayCashTotal.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+
+            <!-- Right Column: General Expenses -->
+            <div class="section">
+              <div class="section-title">GÜNLÜK NAKİT GENEL GİDERLER</div>
+              <table>
+                <thead>
+                  <tr>
+                    <th style="width: 30%;">HARCAMA DETAYI</th>
+                    <th style="width: 20%;">TARİHİ VE FİŞ NO</th>
+                    <th style="width: 10%;">ÖDEME</th>
+                    <th style="width: 18%;">HARCAMA TUTARI</th>
+                    <th style="width: 12%;">KAYDEDEN</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${[...Array(15)].map((_, idx) => {
+                    const expense = expenses[idx]
+                    return `
+                      <tr ${expense?.paymentMethod === 'card' ? 'class="card-payment"' : ''}>
+                        <td>${expense?.description || ''}</td>
+                        <td>${expense ? `${expense.invoiceDate ? new Date(expense.invoiceDate).toLocaleDateString('tr-TR') : ''} ${expense.invoiceNo || ''}` : ''}</td>
+                        <td class="text-center">${expense ? (expense.paymentMethod === 'card' ? '💳 Kart' : '💵 Nakit') : ''}</td>
+                        <td class="text-right">${expense ? expense.amount.toLocaleString('tr-TR') : '0'}</td>
+                        <td style="font-size: 7pt;">${expense?.createdByName || ''}</td>
+                      </tr>
+                    `
+                  }).join('')}
+                  <tr class="summary-row">
+                    <td colspan="3">BUGÜN ÖDENEN NAKİT GİDERLER TOPLAMI</td>
+                    <td class="text-right">${summary.totalExpenses.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                  <tr class="summary-row">
+                    <td colspan="3">BUGÜN İTİBARİYLE TOPLAM YÖMİYE BORCU</td>
+                    <td class="text-right">${summary.totalWageDebt.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                  <tr class="total-row">
+                    <td colspan="3">BUGÜN TAHAKKUK EDEN YÖMİYE TOPLAMI</td>
+                    <td class="text-right">${summary.totalAccruedWages.toLocaleString('tr-TR')}</td>
+                    <td></td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `
+
+    printWindow.document.write(printContent)
+    printWindow.document.close()
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-64">Yükleniyor...</div>
   }
@@ -292,6 +527,13 @@ export function DailyCashFlow({ user }: { user: any }) {
                 onClick={() => setSelectedDate(new Date().toISOString().split('T')[0])}
               >
                 Bugün
+              </Button>
+              <Button
+                onClick={handlePrint}
+                className="bg-blue-600 hover:bg-blue-700"
+              >
+                <Printer className="h-4 w-4 mr-2" />
+                Yazdır
               </Button>
             </div>
           </div>

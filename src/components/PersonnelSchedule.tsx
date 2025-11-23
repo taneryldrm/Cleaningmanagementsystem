@@ -2,7 +2,8 @@ import { useEffect, useState } from 'react'
 import { apiCall } from '../utils/supabase/client'
 import { Card, CardContent, CardHeader, CardTitle } from './ui/card'
 import { Badge } from './ui/badge'
-import { Calendar, Users, Briefcase } from 'lucide-react'
+import { Button } from './ui/button'
+import { Calendar, Users, Briefcase, Printer } from 'lucide-react'
 import { Input } from './ui/input'
 import { Label } from './ui/label'
 
@@ -143,8 +144,6 @@ export function PersonnelSchedule() {
     return scheduleData.sort((a, b) => b.date.localeCompare(a.date))
   }
 
-  const scheduleData = getScheduleData()
-
   const formatDate = (dateStr: string) => {
     const date = new Date(dateStr)
     const today = new Date()
@@ -165,6 +164,197 @@ export function PersonnelSchedule() {
     if (isTomorrow) return `Yarın - ${formatted}`
     return formatted
   }
+
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    const scheduleData = getScheduleData()
+    
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Günlük İş Programı - Uçanlar Temizlik</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 15mm;
+            }
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: Arial, sans-serif;
+              font-size: 10pt;
+              line-height: 1.3;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 15px;
+              border-bottom: 2px solid #000;
+              padding-bottom: 10px;
+            }
+            .header h1 {
+              font-size: 16pt;
+              margin-bottom: 5px;
+            }
+            .header p {
+              font-size: 9pt;
+              color: #666;
+            }
+            .date-section {
+              page-break-inside: avoid;
+              margin-bottom: 25px;
+            }
+            .date-header {
+              background: #f0f0f0;
+              padding: 8px 10px;
+              margin-bottom: 10px;
+              border: 1px solid #000;
+              font-weight: bold;
+              font-size: 11pt;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-bottom: 5px;
+            }
+            th, td {
+              border: 1px solid #333;
+              padding: 6px 8px;
+              text-align: left;
+              vertical-align: top;
+            }
+            th {
+              background: #e8e8e8;
+              font-weight: bold;
+              font-size: 9pt;
+              text-align: center;
+            }
+            .col-no { width: 30px; text-align: center; }
+            .col-customer { width: 25%; }
+            .col-description { width: 30%; }
+            .col-personnel { width: 20%; }
+            .col-signature { width: 15%; min-height: 40px; }
+            .col-notes { width: 10%; }
+            .status-badge {
+              display: inline-block;
+              padding: 2px 6px;
+              border-radius: 3px;
+              font-size: 8pt;
+              font-weight: bold;
+            }
+            .status-draft { background: #fff3cd; color: #856404; }
+            .status-approved { background: #cfe2ff; color: #084298; }
+            .status-completed { background: #d1e7dd; color: #0f5132; }
+            .summary {
+              margin-top: 10px;
+              padding: 8px;
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+              border-radius: 4px;
+              font-size: 9pt;
+            }
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 3px 0;
+            }
+            @media print {
+              .no-print { display: none; }
+              body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>UÇANLAR TEMİZLİK - GÜNLÜK İŞ PROGRAMI</h1>
+            <p>Tarih Aralığı: ${new Date(startDate).toLocaleDateString('tr-TR')} - ${new Date(endDate).toLocaleDateString('tr-TR')}</p>
+            <p>Yazdırma Tarihi: ${new Date().toLocaleDateString('tr-TR', { 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}</p>
+          </div>
+
+          ${scheduleData.map((entry, index) => `
+            <div class="date-section">
+              <div class="date-header">
+                📅 ${formatDate(entry.date)} - ${entry.totalWorkers} İşçi - ${entry.workOrders.length} İş Emri
+              </div>
+              <table>
+                <thead>
+                  <tr>
+                    <th class="col-no">No</th>
+                    <th class="col-customer">Müşteri Adı</th>
+                    <th class="col-description">İş Açıklaması</th>
+                    <th class="col-personnel">Personel</th>
+                    <th class="col-signature">İmza</th>
+                    <th class="col-notes">Notlar</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  ${entry.workOrders.map((wo, woIndex) => `
+                    <tr>
+                      <td class="col-no">${woIndex + 1}</td>
+                      <td class="col-customer">
+                        <strong>${wo.customerName}</strong>
+                        ${wo.status === 'draft' ? '<span class="status-badge status-draft">Taslak</span>' : ''}
+                        ${wo.status === 'approved' ? '<span class="status-badge status-approved">Onaylı</span>' : ''}
+                        ${wo.status === 'completed' ? '<span class="status-badge status-completed">Tamamlandı</span>' : ''}
+                      </td>
+                      <td class="col-description">${wo.description || '-'}</td>
+                      <td class="col-personnel">
+                        <strong>(${wo.personnelCount})</strong>
+                        ${wo.personnelNames.length > 0 ? wo.personnelNames.join(', ') : 'Atanmadı'}
+                      </td>
+                      <td class="col-signature"></td>
+                      <td class="col-notes"></td>
+                    </tr>
+                  `).join('')}
+                </tbody>
+              </table>
+            </div>
+          `).join('')}
+
+          <div class="summary">
+            <div class="summary-row">
+              <strong>TOPLAM ÖZET:</strong>
+            </div>
+            <div class="summary-row">
+              <span>Toplam Gün Sayısı:</span>
+              <strong>${scheduleData.length} Gün</strong>
+            </div>
+            <div class="summary-row">
+              <span>Toplam İş Emri:</span>
+              <strong>${scheduleData.reduce((sum, entry) => sum + entry.workOrders.length, 0)} Adet</strong>
+            </div>
+            <div class="summary-row">
+              <span>Ortalama İşçi/Gün:</span>
+              <strong>${(scheduleData.reduce((sum, entry) => sum + entry.totalWorkers, 0) / scheduleData.length).toFixed(1)} Kişi</strong>
+            </div>
+          </div>
+
+          <script>
+            window.onload = function() {
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `
+
+    printWindow.document.write(printContent)
+    printWindow.document.close()
+  }
+
+  const scheduleData = getScheduleData()
 
   if (loading) {
     return <div className="flex items-center justify-center h-64">Yükleniyor...</div>
@@ -199,6 +389,14 @@ export function PersonnelSchedule() {
               className="w-full sm:w-40"
             />
           </div>
+          <Button 
+            onClick={handlePrint}
+            disabled={scheduleData.length === 0}
+            className="bg-blue-600 hover:bg-blue-700 whitespace-nowrap"
+          >
+            <Printer className="h-4 w-4 mr-2" />
+            Yazdır
+          </Button>
         </div>
       </div>
 

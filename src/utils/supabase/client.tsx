@@ -29,8 +29,30 @@ export async function apiCall(endpoint: string, options: ApiCallOptions = {}, re
   
   if (!skipAuth) {
     const supabase = createClient()
-    const { data: { session } } = await supabase.auth.getSession()
-    authToken = session?.access_token || publicAnonKey
+    
+    // Try to refresh session if it exists
+    const { data: { session }, error: sessionError } = await supabase.auth.getSession()
+    
+    if (sessionError) {
+      console.error('Session error:', sessionError)
+    }
+    
+    // If no session or session expired, try to refresh
+    if (!session || sessionError) {
+      console.log('🔄 No active session or session error, attempting to refresh...')
+      const { data: { session: refreshedSession }, error: refreshError } = await supabase.auth.refreshSession()
+      
+      if (refreshError) {
+        console.error('Session refresh failed:', refreshError)
+        // Redirect to login
+        window.location.reload()
+        throw new Error('Session expired. Please login again.')
+      }
+      
+      authToken = refreshedSession?.access_token || publicAnonKey
+    } else {
+      authToken = session.access_token
+    }
   }
   
   const headers: HeadersInit = {
@@ -41,6 +63,8 @@ export async function apiCall(endpoint: string, options: ApiCallOptions = {}, re
 
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
+      console.log(`🔄 API Call attempt ${attempt + 1}/${retries} to ${endpoint}`)
+      
       const response = await fetch(`${API_URL}${endpoint}`, {
         ...fetchOptions,
         headers,
@@ -57,22 +81,33 @@ export async function apiCall(endpoint: string, options: ApiCallOptions = {}, re
       }
       
       if (!response.ok) {
-        console.error(`API Error at ${endpoint}:`, data.error)
-        throw new Error(data.error || 'API request failed')
+        // Handle 401 Unauthorized - redirect to login
+        if (response.status === 401) {
+          console.error('❌ Unauthorized - Session expired, redirecting to login...')
+          const supabase = createClient()
+          await supabase.auth.signOut()
+          window.location.reload()
+          throw new Error('Session expired. Please login again.')
+        }
+        
+        console.error(`❌ API Error at ${endpoint} (${response.status}):`, data.error)
+        throw new Error(data.error || `API request failed with status ${response.status}`)
       }
 
+      console.log(`✅ API Call successful to ${endpoint}`)
       return data
     } catch (error) {
       const isLastAttempt = attempt === retries - 1
       
-      if (error instanceof Error && error.message.includes('fetch')) {
+      if (error instanceof Error && (error.message.includes('fetch') || error.name === 'TypeError')) {
         if (isLastAttempt) {
-          console.error(`Network error calling ${endpoint} after ${retries} attempts. Error:`, error.message)
-          throw new Error('Sunucu henüz hazır değil. Lütfen birkaç saniye bekleyip sayfayı yenileyin.')
+          console.error(`❌ Network error calling ${endpoint} after ${retries} attempts. Error:`, error.message)
+          throw new Error('Sunucu bağlantısı kurulamadı. Lütfen sayfayı yenileyin ve tekrar deneyin. Sorun devam ederse birkaç saniye bekleyin.')
         } else {
-          // Wait before retry (exponential backoff)
-          console.log(`Retrying ${endpoint}... (attempt ${attempt + 1}/${retries})`)
-          await delay(1000 * Math.pow(2, attempt))
+          // Wait before retry (exponential backoff: 2s, 4s, 8s)
+          const waitTime = 2000 * Math.pow(2, attempt)
+          console.log(`⏳ Retrying ${endpoint} in ${waitTime}ms... (attempt ${attempt + 1}/${retries})`)
+          await delay(waitTime)
           continue
         }
       }

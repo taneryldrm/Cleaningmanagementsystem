@@ -15,6 +15,7 @@ import { Finance } from './components/Finance'
 import { UserManagement } from './components/UserManagement'
 import { Analytics } from './components/Analytics'
 import { PendingCollections } from './components/PendingCollections'
+import { DataImport } from './components/DataImport'
 import { MobileMenuGrid } from './components/MobileMenuGrid'
 import { Button } from './components/ui/button'
 import { useIsMobile } from './components/ui/use-mobile'
@@ -37,10 +38,11 @@ import {
   BarChart3,
   AlertCircle,
   Grid3x3,
-  ArrowLeft
+  ArrowLeft,
+  Upload
 } from 'lucide-react'
 
-type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'pending-collections' | 'users'
+type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'pending-collections' | 'users' | 'data-import'
 
 export default function App() {
   const [user, setUser] = useState<any>(null)
@@ -54,6 +56,29 @@ export default function App() {
 
   useEffect(() => {
     checkServerHealth()
+    
+    // Set up auth state listener
+    const supabase = createClient()
+    const { data: { subscription } } = supabase.auth.onAuthStateChange(async (event, session) => {
+      console.log('🔐 Auth state changed:', event, session?.user?.email)
+      
+      if (event === 'SIGNED_OUT' || event === 'USER_DELETED') {
+        setUser(null)
+        setCurrentPage('dashboard')
+      } else if (event === 'SIGNED_IN' || event === 'TOKEN_REFRESHED') {
+        if (session?.user) {
+          setUser(session.user)
+        }
+      } else if (event === 'USER_UPDATED') {
+        if (session?.user) {
+          setUser(session.user)
+        }
+      }
+    })
+
+    return () => {
+      subscription.unsubscribe()
+    }
   }, [])
 
   const checkServerHealth = async () => {
@@ -181,6 +206,7 @@ export default function App() {
     { id: 'monthly-search' as Page, label: 'Geçmiş Arama', icon: SearchCheck, roles: ['admin', 'secretary'] },
     { id: 'personnel-schedule' as Page, label: 'Personel Takvimi', icon: CalendarDays, roles: ['admin', 'secretary', 'driver'] },
     { id: 'finance' as Page, label: 'Gelir-Gider', icon: TrendingUp, roles: ['admin', 'secretary'] },
+    { id: 'data-import' as Page, label: 'Veri İçe Aktar', icon: Upload, roles: ['admin'] },
     { id: 'users' as Page, label: 'Kullanıcılar', icon: Settings, roles: ['admin'] },
   ]
 
@@ -214,6 +240,8 @@ export default function App() {
         return <Finance user={user} />
       case 'users':
         return role === 'admin' ? <UserManagement /> : <Dashboard user={user} onNavigate={setCurrentPage} />
+      case 'data-import':
+        return role === 'admin' ? <DataImport user={user} /> : <Dashboard user={user} onNavigate={setCurrentPage} />
       default:
         return <Dashboard user={user} onNavigate={setCurrentPage} />
     }

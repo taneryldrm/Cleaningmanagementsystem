@@ -11,6 +11,7 @@ import { Textarea } from './ui/textarea'
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from './ui/table'
 import { Switch } from './ui/switch'
 import { toast } from 'sonner@2.0.3'
+import { PersonnelImport } from './PersonnelImport'
 
 interface Personnel {
   id: string
@@ -21,6 +22,7 @@ interface Personnel {
   active: boolean
   createdAt: string
   totalBalance?: number
+  tcNo?: string // TC Kimlik No
 }
 
 interface WorkOrder {
@@ -56,7 +58,8 @@ export function Personnel({ user }: { user: any }) {
     name: '',
     role: 'cleaner',
     phone: '',
-    notes: ''
+    notes: '',
+    tcNo: ''
   })
 
   const userRole = user?.user_metadata?.role
@@ -149,7 +152,8 @@ export function Personnel({ user }: { user: any }) {
         contactInfo: {
           phone: formData.phone
         },
-        notes: formData.notes
+        notes: formData.notes,
+        tcNo: formData.tcNo
       }
 
       if (editingPersonnel) {
@@ -181,7 +185,8 @@ export function Personnel({ user }: { user: any }) {
       name: person.name,
       role: person.role,
       phone: person.contactInfo?.phone || '',
-      notes: person.notes || ''
+      notes: person.notes || '',
+      tcNo: person.tcNo || ''
     })
     setIsDialogOpen(true)
   }
@@ -220,7 +225,8 @@ export function Personnel({ user }: { user: any }) {
       name: '',
       role: 'cleaner',
       phone: '',
-      notes: ''
+      notes: '',
+      tcNo: ''
     })
     setEditingPersonnel(null)
   }
@@ -324,6 +330,10 @@ export function Personnel({ user }: { user: any }) {
               <div>
                 <div className="text-sm text-gray-500">Telefon</div>
                 <div className="font-medium">{viewingPersonnel.contactInfo?.phone || '-'}</div>
+              </div>
+              <div>
+                <div className="text-sm text-gray-500">TC Kimlik No</div>
+                <div className="font-medium">{viewingPersonnel.tcNo || '-'}</div>
               </div>
               <div>
                 <div className="text-sm text-gray-500">Durum</div>
@@ -440,6 +450,12 @@ export function Personnel({ user }: { user: any }) {
           </p>
         </div>
         <div className="flex gap-2">
+          {canEdit && (
+            <PersonnelImport 
+              onImportComplete={loadPersonnel}
+              user={user}
+            />
+          )}
           {userRole === 'admin' && (
             <Button 
               variant="outline" 
@@ -500,6 +516,14 @@ export function Personnel({ user }: { user: any }) {
                     value={formData.notes}
                     onChange={(e) => setFormData({ ...formData, notes: e.target.value })}
                     rows={3}
+                  />
+                </div>
+                <div className="space-y-2">
+                  <Label htmlFor="tcNo">TC Kimlik No</Label>
+                  <Input
+                    id="tcNo"
+                    value={formData.tcNo}
+                    onChange={(e) => setFormData({ ...formData, tcNo: e.target.value })}
                   />
                 </div>
                 <div className="flex justify-end gap-2">

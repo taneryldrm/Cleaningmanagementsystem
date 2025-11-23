@@ -12,10 +12,11 @@ import {
   SearchCheck,
   BarChart3,
   AlertCircle,
-  User
+  User,
+  Upload
 } from 'lucide-react'
 
-type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'pending-collections' | 'users'
+type Page = 'dashboard' | 'analytics' | 'customers' | 'personnel' | 'work-orders' | 'personnel-schedule' | 'mobile-daily' | 'personnel-payroll' | 'daily-cash-flow' | 'monthly-search' | 'finance' | 'pending-collections' | 'users' | 'data-import'
 
 interface MobileMenuGridProps {
   role: string
@@ -37,6 +38,7 @@ export function MobileMenuGrid({ role, userName, onNavigate }: MobileMenuGridPro
     { id: 'monthly-search' as Page, label: 'Geçmiş Arama', icon: SearchCheck, roles: ['admin', 'secretary'] },
     { id: 'personnel-schedule' as Page, label: 'Takvim', icon: CalendarDays, roles: ['admin', 'secretary', 'driver'] },
     { id: 'finance' as Page, label: 'Gelir-Gider', icon: TrendingUp, roles: ['admin', 'secretary'] },
+    { id: 'data-import' as Page, label: 'Veri İçe Aktar', icon: Upload, roles: ['admin'] },
     { id: 'users' as Page, label: 'Kullanıcılar', icon: Settings, roles: ['admin'] },
   ]
 

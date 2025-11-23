@@ -6,7 +6,7 @@ import { Label } from './ui/label'
 import { Button } from './ui/button'
 import { Badge } from './ui/badge'
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from './ui/dialog'
-import { Calendar, Phone, MapPin, Users, DollarSign, ClipboardList, CheckCircle, Clock, AlertCircle } from 'lucide-react'
+import { Calendar, Phone, MapPin, Users, DollarSign, ClipboardList, CheckCircle, Clock, AlertCircle, Printer } from 'lucide-react'
 import { toast } from 'sonner@2.0.3'
 
 interface WorkOrder {
@@ -62,6 +62,7 @@ export function MobileDailyProgram({ user }: { user: any }) {
 
   const userRole = user?.user_metadata?.role
   const canEdit = userRole === 'admin' || userRole === 'secretary'
+  const canApprove = userRole === 'admin' || userRole === 'secretary'
 
   useEffect(() => {
     loadData()
@@ -221,6 +222,196 @@ export function MobileDailyProgram({ user }: { user: any }) {
     }).format(amount || 0)
   }
 
+  const handlePrint = () => {
+    const printWindow = window.open('', '_blank')
+    if (!printWindow) return
+
+    const { approved: approvedItems } = getDailyWorkItems()
+    
+    const printContent = `
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Günlük İş Programı - ${formatDate(selectedDate)}</title>
+          <style>
+            @page {
+              size: A4;
+              margin: 15mm;
+            }
+            * {
+              margin: 0;
+              padding: 0;
+              box-sizing: border-box;
+            }
+            body {
+              font-family: Arial, sans-serif;
+              font-size: 9pt;
+              line-height: 1.3;
+            }
+            .header {
+              text-align: center;
+              margin-bottom: 15px;
+              border-bottom: 2px solid #000;
+              padding-bottom: 10px;
+            }
+            .header h1 {
+              font-size: 16pt;
+              margin-bottom: 5px;
+            }
+            .header p {
+              font-size: 10pt;
+              color: #333;
+              margin: 3px 0;
+            }
+            table {
+              width: 100%;
+              border-collapse: collapse;
+              margin-top: 15px;
+            }
+            th, td {
+              border: 1px solid #333;
+              padding: 8px 6px;
+              text-align: left;
+              vertical-align: top;
+            }
+            th {
+              background: #e8e8e8;
+              font-weight: bold;
+              font-size: 8pt;
+              text-align: center;
+              text-transform: uppercase;
+            }
+            .col-no { width: 40px; text-align: center; }
+            .col-customer { width: 15%; }
+            .col-tel { width: 10%; }
+            .col-personnel { width: 12%; }
+            .col-description { width: 18%; }
+            .col-address { width: 15%; }
+            .col-amount { width: 10%; text-align: right; }
+            .col-status { width: 8%; text-align: center; }
+            .col-signature { width: 12%; min-height: 40px; }
+            .status-badge {
+              display: inline-block;
+              padding: 2px 6px;
+              border-radius: 3px;
+              font-size: 7pt;
+              font-weight: bold;
+            }
+            .status-approved { background: #cfe2ff; color: #084298; }
+            .status-completed { background: #d1e7dd; color: #0f5132; }
+            .summary {
+              margin-top: 20px;
+              padding: 10px;
+              background: #f8f9fa;
+              border: 1px solid #dee2e6;
+              border-radius: 4px;
+            }
+            .summary-row {
+              display: flex;
+              justify-content: space-between;
+              padding: 4px 0;
+              font-size: 9pt;
+            }
+            .total-row {
+              font-weight: bold;
+              border-top: 2px solid #333;
+              padding-top: 8px;
+              margin-top: 4px;
+            }
+            @media print {
+              body { print-color-adjust: exact; -webkit-print-color-adjust: exact; }
+            }
+          </style>
+        </head>
+        <body>
+          <div class="header">
+            <h1>UÇANLAR TEMİZLİK - GÜNLÜK İŞ PROGRAMI</h1>
+            <p>${formatDate(selectedDate)}</p>
+            <p>Yazdırma: ${new Date().toLocaleDateString('tr-TR', { 
+              year: 'numeric', 
+              month: 'long', 
+              day: 'numeric',
+              hour: '2-digit',
+              minute: '2-digit'
+            })}</p>
+          </div>
+
+          <table>
+            <thead>
+              <tr>
+                <th class="col-no">Sıra<br>No</th>
+                <th class="col-customer">Müşteri Ad /<br>Ünvan</th>
+                <th class="col-tel">Müşteri<br>Tel</th>
+                <th class="col-personnel">Personel<br>Ad</th>
+                <th class="col-description">Yazılacak İş ve<br>Açıklamalar</th>
+                <th class="col-address">İş<br>Adresi</th>
+                <th class="col-amount">Ücret</th>
+                <th class="col-status">Durum</th>
+                <th class="col-signature">İşlem</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${approvedItems.length === 0 ? `
+                <tr>
+                  <td colspan="9" style="text-align: center; padding: 30px; color: #666;">
+                    Seçilen tarih için onaylanmış iş emri bulunamadı
+                  </td>
+                </tr>
+              ` : approvedItems.map((item) => `
+                <tr>
+                  <td class="col-no">${item.orderNumber}</td>
+                  <td class="col-customer">${item.customerName}</td>
+                  <td class="col-tel">${item.customerPhone}</td>
+                  <td class="col-personnel">${item.personnelNames}</td>
+                  <td class="col-description">${item.description}</td>
+                  <td class="col-address">${item.address}</td>
+                  <td class="col-amount">${item.amount > 0 ? formatCurrency(item.amount) : '-'}</td>
+                  <td class="col-status">
+                    ${item.status === 'completed' 
+                      ? '<span class="status-badge status-completed">Tamamlandı</span>' 
+                      : '<span class="status-badge status-approved">Onaylandı</span>'}
+                  </td>
+                  <td class="col-signature"></td>
+                </tr>
+              `).join('')}
+            </tbody>
+          </table>
+
+          ${approvedItems.length > 0 ? `
+            <div class="summary">
+              <div class="summary-row">
+                <span>Toplam İş Sayısı:</span>
+                <strong>${approvedItems.length} Adet</strong>
+              </div>
+              <div class="summary-row">
+                <span>Toplam Tutar:</span>
+                <strong>${formatCurrency(approvedItems.reduce((sum, item) => sum + item.amount, 0))}</strong>
+              </div>
+              <div class="summary-row">
+                <span>Çalışan Personel:</span>
+                <strong>${[...new Set(approvedItems.flatMap(item => item.personnelNames.split(', ')))].filter(Boolean).length} Kişi</strong>
+              </div>
+              <div class="summary-row total-row">
+                <span>Tamamlanan İşler:</span>
+                <strong>${approvedItems.filter(item => item.status === 'completed').length} / ${approvedItems.length}</strong>
+              </div>
+            </div>
+          ` : ''}
+
+          <script>
+            window.onload = function() {
+              window.print();
+            }
+          </script>
+        </body>
+      </html>
+    `
+
+    printWindow.document.write(printContent)
+    printWindow.document.close()
+  }
+
   if (loading) {
     return <div className="flex items-center justify-center h-64">Yükleniyor...</div>
   }
@@ -250,6 +441,13 @@ export function MobileDailyProgram({ user }: { user: any }) {
               className="w-full sm:w-auto"
             >
               Bugün
+            </Button>
+            <Button
+              onClick={handlePrint}
+              className="w-full sm:w-auto bg-blue-600 hover:bg-blue-700"
+            >
+              <Printer className="h-4 w-4 mr-2" />
+              Yazdır
             </Button>
           </div>
         </CardContent>
